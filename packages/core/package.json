@@ -13,6 +13,6 @@
     "build": "tsc --project tsconfig.json",
     "lint": "oxlint --deny-warnings src",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "node --test"
   }
 }
