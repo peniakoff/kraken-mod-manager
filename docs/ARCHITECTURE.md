@@ -13,6 +13,14 @@ TypeScript types. `@kraken/core` will contain KSP detection, CKAN metadata,
 dependency resolution, and installation policy. Platform file-system access,
 networking, and HTTP are adapters around that core.
 
+## TypeScript 7 compatibility
+
+The project is pinned to TypeScript 7.0.2. Current `vue-tsc` depends on a
+TypeScript compiler path that TypeScript 7 no longer exports, so the skeleton
+uses `tsc` for TypeScript files and Vite plus component tests to compile Vue
+single-file components. Restore full SFC type-checking when an upstream
+`vue-tsc` release supports TypeScript 7.
+
 ## Security baseline
 
 The local API is intentionally loopback-only. Future state-changing endpoints
