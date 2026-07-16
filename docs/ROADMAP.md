@@ -36,6 +36,10 @@
 ## Phase 2: Game Detection & Path Handling (KSP Auto-Discovery)
 *Goal: Automatically locate the game installation or provide a seamless manual selection process.*
 
+The implementation sequence, API boundaries, security controls, acceptance
+criteria, and test matrix for this phase are defined in the
+[next delivery cycle plan](NEXT_CYCLE_PLAN.md).
+
 - [ ] **2.1. Drive Scanning Module:**
     *   Create a Node.js module to scan standard Steam, GOG, and Epic Games paths across Windows, Linux, and macOS.
     *   Verify valid KSP instances by checking for `KSP.exe` / `KSP.x86_64` and reading the `readme.txt` / `buildID64.txt` for the game version.
