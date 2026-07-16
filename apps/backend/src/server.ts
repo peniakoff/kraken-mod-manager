@@ -1,6 +1,7 @@
-import { createApp } from "./app.js";
+import { createApp, createDefaultDependencies } from "./app.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { dirname, join, resolve } from "node:path";
 
 const defaultPort = 31415;
 const host = "127.0.0.1";
@@ -36,7 +37,11 @@ function openBrowser(url: string): void {
 
 async function start(): Promise<void> {
   const port = getPort(process.env.KMM_PORT);
-  const server = createServer(createApp(process.env.npm_package_version));
+  const entryPath = resolve(process.argv[1] ?? process.cwd());
+  const frontendDirectory = process.env.KMM_FRONTEND_DIR ?? join(dirname(entryPath), "frontend");
+  const server = createServer(
+    createApp(process.env.npm_package_version, createDefaultDependencies(frontendDirectory)),
+  );
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
