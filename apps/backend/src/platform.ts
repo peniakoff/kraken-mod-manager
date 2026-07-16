@@ -30,6 +30,9 @@ export function getConfigFilePath(platform: PlatformPort): string {
 }
 
 export function getBrowseRoots(platform: PlatformPort): string[] {
+  if (platform.platform === "win32") {
+    return Array.from({ length: 26 }, (_, index) => `${String.fromCharCode(65 + index)}:\\`);
+  }
   const roots = [platform.homeDirectory, parse(platform.homeDirectory).root];
   return [...new Set(roots)];
 }

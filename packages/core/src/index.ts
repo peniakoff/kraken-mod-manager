@@ -14,6 +14,7 @@ export interface KspInstallation {
 
 export interface FileSystemPort {
   exists(path: string): Promise<boolean>;
+  isFile(path: string): Promise<boolean>;
   realpath(path: string): Promise<string>;
   readText(path: string): Promise<string>;
 }
@@ -67,7 +68,7 @@ function executableNames(platform: KspPlatform): string[] {
     case "linux":
       return ["KSP.x86_64"];
     case "darwin":
-      return ["KSP", "KSP.app"];
+      return ["KSP", "KSP.app/Contents/MacOS/KSP"];
     default: {
       const exhaustive: never = platform;
       throw new Error(`Unsupported platform: ${exhaustive}`);
@@ -105,7 +106,7 @@ export async function validateKspInstallation(
   }
 
   const executables = executableNames(platform);
-  const isValid = await Promise.all(executables.map((file) => fileSystem.exists(`${canonicalPath}/${file}`)));
+  const isValid = await Promise.all(executables.map((file) => fileSystem.isFile(`${canonicalPath}/${file}`)));
   if (!isValid.some(Boolean)) {
     return undefined;
   }

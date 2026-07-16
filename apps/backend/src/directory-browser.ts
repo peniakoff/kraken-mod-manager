@@ -25,7 +25,16 @@ export class DirectoryBrowser {
   constructor(private readonly roots: readonly string[]) {}
 
   async list(requestedPath: string | undefined): Promise<DirectoryListing> {
-    const canonicalRoots = await Promise.all(this.roots.map((root) => realpath(root)));
+    const resolvedRoots = await Promise.all(
+      this.roots.map(async (root) => {
+        try {
+          return await realpath(root);
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    const canonicalRoots = resolvedRoots.filter((root): root is string => root !== undefined);
     const requested = requestedPath === undefined ? canonicalRoots[0] : requestedPath;
     if (requested === undefined || !isAbsolute(requested)) {
       throw new DirectoryBrowserError("INVALID_PATH", "A valid absolute directory path is required.");
@@ -49,7 +58,7 @@ export class DirectoryBrowser {
     }
 
     const directories = entries
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort((left, right) => left.localeCompare(right))
       .slice(0, maximumDirectories);

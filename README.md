@@ -43,7 +43,9 @@ On first launch, Kraken searches standard Steam, GOG, and Epic locations for a
 valid KSP executable. If it cannot find the game, select the installation from
 the directory-only browser. The browser exposes directory names only, follows
 neither path traversal nor symbolic links outside its explicit roots, and
-validates the selected folder before it is saved.
+validates the selected folder before it is saved. On Linux and macOS its roots
+are the user's home directory and filesystem root; on Windows it exposes every
+available drive root.
 
 The active installation is stored atomically in `config.json`:
 

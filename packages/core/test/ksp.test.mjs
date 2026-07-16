@@ -7,6 +7,9 @@ test("validates an executable and optional version metadata", async () => {
     async exists(path) {
       return path.endsWith("/KSP.x86_64");
     },
+    async isFile(path) {
+      return path.endsWith("/KSP.x86_64");
+    },
     async realpath(path) {
       return `/canonical${path}`;
     },
@@ -29,6 +32,9 @@ test("deduplicates and sorts discovered installations", async () => {
     async exists(path) {
       return path.includes("Steam") || path.includes(".steam");
     },
+    async isFile(path) {
+      return path.includes("Steam") || path.includes(".steam");
+    },
     async realpath(path) {
       return path.replace("/.local/share/Steam", "/.steam/steam");
     },
@@ -39,4 +45,23 @@ test("deduplicates and sorts discovered installations", async () => {
   const installations = await discoverInstallations(fileSystem, platform);
   assert.equal(installations.length, 1);
   assert.equal(installations[0].source, "steam");
+});
+
+test("rejects a directory that only has an executable-looking name", async () => {
+  const fileSystem = {
+    async exists() {
+      return true;
+    },
+    async isFile() {
+      return false;
+    },
+    async realpath(path) {
+      return path;
+    },
+    async readText() {
+      return "";
+    },
+  };
+  const installation = await validateKspInstallation(fileSystem, "linux", "/ksp", "manual");
+  assert.equal(installation, undefined);
 });
