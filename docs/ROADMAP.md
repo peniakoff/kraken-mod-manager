@@ -4,7 +4,7 @@
 *   **Backend (Core Logic & File System):** Node.js v24 + TypeScript v7 (Express.js as a lightweight local server).
 *   **Frontend (User Interface):** Vue.js 3 (Composition API) + Vite + Tailwind CSS.
 *   **Package Manager:** `pnpm` (using pnpm workspaces for monorepo management).
-*   **Communication:** REST API / WebSockets (for download progress tracking).
+*   **Communication:** REST API / Server-Sent Events (for download progress tracking).
 *   **Build & Packaging:** Node.js v24 SEA (Single Executable Applications) API – zero external dependencies required for the end-user.
 
 ## Phase 1: Project Initialization & Skeleton (Monorepo)
@@ -31,7 +31,7 @@
 - [x] **1.4. Auto-launching the Browser:**
     *   Open the default browser after the local server is listening; opt out with `KMM_OPEN_BROWSER=false`.
 - [x] **1.5. Development quality gates:**
-    *   Add strict TypeScript, ESLint, unit/API tests, root workspace scripts, and GitHub Actions CI.
+    *   Add strict TypeScript, oxlint, unit/API tests, root workspace scripts, and GitHub Actions CI.
 
 ## Phase 2: Game Detection & Path Handling (KSP Auto-Discovery)
 *Goal: Automatically locate the game installation or provide a seamless manual selection process.*
@@ -40,13 +40,13 @@ The implementation sequence, API boundaries, security controls, acceptance
 criteria, and test matrix for this phase are defined in the
 [next delivery cycle plan](NEXT_CYCLE_PLAN.md).
 
-- [ ] **2.1. Drive Scanning Module:**
+- [x] **2.1. Drive Scanning Module:**
     *   Create a Node.js module to scan standard Steam, GOG, and Epic Games paths across Windows, Linux, and macOS.
     *   Verify valid KSP instances by checking for `KSP.exe` / `KSP.x86_64` and reading the `readme.txt` / `buildID64.txt` for the game version.
-- [ ] **2.2. Web-based File Explorer (Fallback):**
+- [x] **2.2. Web-based File Explorer (Fallback):**
     *   Create a backend endpoint (`GET /api/v1/fs/directories?path=...`) to return local directory structures.
     *   Build a Vue.js component that allows users to manually browse their local drives to select the KSP directory if auto-discovery fails.
-- [ ] **2.3. Configuration Persistence:**
+- [x] **2.3. Configuration Persistence:**
     *   Save the selected game path and preferences to a local configuration file (e.g., `config.json` in the user's OS AppData/Config folder).
 
 ## Phase 3: Metadata & Mod Repository (CKAN Registry Integration)
@@ -108,6 +108,6 @@ criteria, and test matrix for this phase are defined in the
 
 ## Phase 8: Release & Maintenance (v1.0.0)
 - [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
-- [ ] Set up GitHub Actions for CI/CD (automated binary building on new tags using `pnpm`).
+- [ ] Set up binary-delivery CD (automated builds on new tags using `pnpm`); the existing workflow provides CI only.
 - [ ] Create Issue / Pull Request templates for the community.
 - [ ] Publish the first official Release (v1.0.0) on GitHub.

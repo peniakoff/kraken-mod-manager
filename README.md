@@ -35,9 +35,26 @@ port, and `KMM_OPEN_BROWSER=false` to suppress opening the default browser.
 - `apps/backend` — local Express API and production static-file server.
 - `packages/contracts` — validated API contracts shared between client and
   server.
-- `packages/core` — future framework-independent domain logic.
+- `packages/core` — framework-independent KSP detection and validation logic.
 
-The current integration endpoint is `GET /api/v1/health`.
+## KSP setup
+
+On first launch, Kraken searches standard Steam, GOG, and Epic locations for a
+valid KSP executable. If it cannot find the game, select the installation from
+the directory-only browser. The browser exposes directory names only, follows
+neither path traversal nor symbolic links outside its explicit roots, and
+validates the selected folder before it is saved. On Linux and macOS its roots
+are the user's home directory and filesystem root; on Windows it exposes every
+available drive root.
+
+The active installation is stored atomically in `config.json`:
+
+- Windows: `%APPDATA%/Kraken Mod Manager`
+- Linux: `$XDG_CONFIG_HOME/kraken-mod-manager` (or `~/.config/kraken-mod-manager`)
+- macOS: `~/Library/Application Support/Kraken Mod Manager`
+
+The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
+`GET`/`PUT /api/v1/config`, and `GET /api/v1/fs/directories`.
 
 ## Verification
 
