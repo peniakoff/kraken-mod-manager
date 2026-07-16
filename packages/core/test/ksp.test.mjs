@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { discoverInstallations, validateKspInstallation } from "../dist/index.js";
+
+test("validates an executable and optional version metadata", async () => {
+  const fileSystem = {
+    async exists(path) {
+      return path.endsWith("/KSP.x86_64");
+    },
+    async realpath(path) {
+      return `/canonical${path}`;
+    },
+    async readText() {
+      return "KSP Version 1.12.5";
+    },
+  };
+  const installation = await validateKspInstallation(fileSystem, "linux", "/ksp", "manual");
+  assert.deepEqual(installation, {
+    path: "/canonical/ksp",
+    version: "1.12.5",
+    platform: "linux",
+    source: "manual",
+  });
+});
+
+test("deduplicates and sorts discovered installations", async () => {
+  const platform = { platform: "linux", homeDirectory: "/home/test", environment: {} };
+  const fileSystem = {
+    async exists(path) {
+      return path.includes("Steam") || path.includes(".steam");
+    },
+    async realpath(path) {
+      return path.replace("/.local/share/Steam", "/.steam/steam");
+    },
+    async readText() {
+      throw new Error("no metadata");
+    },
+  };
+  const installations = await discoverInstallations(fileSystem, platform);
+  assert.equal(installations.length, 1);
+  assert.equal(installations[0].source, "steam");
+});
