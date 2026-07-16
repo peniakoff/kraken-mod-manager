@@ -103,6 +103,7 @@
     *   Verify the executables run correctly on fresh VMs without Node.js installed.
 
 ## Phase 8: Release & Maintenance (v1.0.0)
+- [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
 - [ ] Set up GitHub Actions for CI/CD (automated binary building on new tags using `pnpm`).
 - [ ] Create Issue / Pull Request templates for the community.
 - [ ] Publish the first official Release (v1.0.0) on GitHub.

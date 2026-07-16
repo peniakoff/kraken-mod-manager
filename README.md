@@ -48,5 +48,6 @@ pnpm test
 pnpm build
 ```
 
-See [the roadmap](docs/ROADMAP.md) and
+Dependency updates are managed by Dependabot
+(`.github/dependabot.yml`). See [the roadmap](docs/ROADMAP.md) and
 [architecture decisions](docs/ARCHITECTURE.md) for the planned work.
