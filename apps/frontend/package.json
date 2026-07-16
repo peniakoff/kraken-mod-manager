@@ -1,0 +1,27 @@
+{
+  "name": "@kraken/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint --deny-warnings src test",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kraken/contracts": "workspace:*",
+    "vue": "^3.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/test-utils": "^2.0.0",
+    "jsdom": "^27.0.0",
+    "tailwindcss": "^4.0.0",
+    "vite": "^8.0.0",
+    "vitest": "^4.0.0"
+  }
+}

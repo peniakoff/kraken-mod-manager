@@ -10,22 +10,28 @@
 ## Phase 1: Project Initialization & Skeleton (Monorepo)
 *Goal: Set up the development environment and connect the frontend with the backend using pnpm workspaces.*
 
-- [ ] **1.1. Repository setup & folder structure:**
+- [x] **1.1. Repository setup & folder structure:**
     ```text
     kraken-mod-manager/
-    ├── backend/              # Node.js Server (TS v7)
-    ├── frontend/             # Vue.js App (Vite)
-    ├── shared/               # Shared TypeScript types/interfaces
+    ├── apps/backend/         # Node.js Server (TS v7)
+    ├── apps/frontend/        # Vue.js App (Vite)
+    ├── packages/contracts/   # Shared API types and schemas
+    ├── packages/core/        # Framework-independent domain logic
+    ├── docs/                 # Roadmap and architecture decisions
     ├── package.json          # Root package.json (scripts)
     └── pnpm-workspace.yaml   # pnpm workspaces configuration
     ```
-- [ ] **1.2. Backend Configuration (Express + TS v7):**
-    *   Initialize a basic local server on a specific or dynamic port (e.g., `31415`).
-    *   Configure static file serving from the built frontend directory (for production).
-- [ ] **1.3. Frontend Configuration (Vue 3 + Vite + Tailwind):**
-    *   Create a basic view to test communication with the backend (`GET /api/ping`).
-- [ ] **1.4. Auto-launching the Browser:**
-    *   Write a startup routine in Node.js that automatically opens the user's default browser at `http://localhost:31415` when the binary is executed.
+- [x] **1.2. Backend Configuration (Express + TS v7):**
+    *   Local-only Express server defaults to `127.0.0.1:31415`; `KMM_PORT` permits an explicit port.
+    *   Serve the production Vue build and SPA fallback when the frontend has been built.
+    *   Provide a validated `GET /api/v1/health` contract.
+- [x] **1.3. Frontend Configuration (Vue 3 + Vite + Tailwind):**
+    *   Vue view verifies communication through `GET /api/v1/health`.
+    *   Vite proxies `/api` to the local backend during development.
+- [x] **1.4. Auto-launching the Browser:**
+    *   Open the default browser after the local server is listening; opt out with `KMM_OPEN_BROWSER=false`.
+- [x] **1.5. Development quality gates:**
+    *   Add strict TypeScript, ESLint, unit/API tests, root workspace scripts, and GitHub Actions CI.
 
 ## Phase 2: Game Detection & Path Handling (KSP Auto-Discovery)
 *Goal: Automatically locate the game installation or provide a seamless manual selection process.*
@@ -81,7 +87,7 @@
 - [ ] **6.3. Mod Details Panel:**
     *   Show detailed descriptions, author info, project links, version history, and dependencies.
 - [ ] **6.4. Queue & Progress Manager:**
-    *   A persistent bottom bar or sidebar showing real-time download and extraction progress (via WebSockets/SSE).
+*   A persistent bottom bar or sidebar showing real-time download and extraction progress (via SSE; WebSockets only if bidirectional communication becomes necessary).
 
 ## Phase 7: Build & Packaging (Distribution)
 *Goal: Compile the entire stack into a single, user-friendly executable file using modern Node.js features.*
@@ -97,6 +103,7 @@
     *   Verify the executables run correctly on fresh VMs without Node.js installed.
 
 ## Phase 8: Release & Maintenance (v1.0.0)
+- [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
 - [ ] Set up GitHub Actions for CI/CD (automated binary building on new tags using `pnpm`).
 - [ ] Create Issue / Pull Request templates for the community.
 - [ ] Publish the first official Release (v1.0.0) on GitHub.

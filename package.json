@@ -1,0 +1,24 @@
+{
+  "name": "kraken-mod-manager",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A lightweight, cross-platform mod manager for Kerbal Space Program.",
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.13.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @kraken/contracts build && pnpm --parallel --filter @kraken/backend --filter @kraken/frontend dev",
+    "build": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm --filter @kraken/frontend build && pnpm --filter @kraken/backend build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm --filter @kraken/contracts build && pnpm -r typecheck",
+    "test": "pnpm --filter @kraken/contracts build && pnpm -r test",
+    "start": "pnpm --filter @kraken/backend start"
+  },
+  "devDependencies": {
+    "oxlint": "^1.74.0",
+    "prettier": "^3.0.0",
+    "typescript": "^7.0.2"
+  }
+}
