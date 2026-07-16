@@ -19,7 +19,15 @@ export function createApp(version = "0.0.0"): express.Express {
 
   if (existsSync(frontendDirectory)) {
     app.use(express.static(frontendDirectory));
-    app.get("/{*path}", (_request, response) => {
+    // Express 5 requires a named wildcard (`/{*path}`); bare `*` / `/*` throw.
+    // Skip dotted paths so missing `.js`/`.css` assets stay 404 instead of
+    // returning `index.html` (Accept: */* still matches `accepts("html")`).
+    app.get("/{*path}", (request, response, next) => {
+      if (request.path.includes(".") || !request.accepts("html")) {
+        next();
+        return;
+      }
+
       response.sendFile(join(frontendDirectory, "index.html"));
     });
   }
