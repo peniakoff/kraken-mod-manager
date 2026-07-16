@@ -5,7 +5,3 @@ packages:
 allowBuilds:
   esbuild: true
 
-# pnpm 11 verifies every lockfile entry against minimumReleaseAge (default 24h).
-# Dependabot can bump to versions published within that window, so CI must trust
-# the committed lockfile instead of re-checking registry publish times.
-trustLockfile: true
