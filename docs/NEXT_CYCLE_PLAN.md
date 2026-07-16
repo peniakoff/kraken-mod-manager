@@ -38,8 +38,7 @@ Implement framework-independent KSP setup logic in `@kraken/core`:
 
 - `KspInstallation`: canonical path, detected game version, operating system,
   and source (`steam`, `gog`, `epic`, or `manual`).
-- Candidate validation based on the expected executable (`KSP.exe` or
-  `KSP.x86_64`) and version metadata from `readme.txt` or `buildID64.txt`.
+- Candidate validation based on the expected executable (KSP.exe, KSP.x86_64, or macOS KSP/KSP.app) and version metadata from readme.txt or buildID64.txt.
 - Discovery strategies for standard Steam, GOG, and Epic locations on Windows,
   Linux, and macOS.
 - Injected file-system and platform ports so core has no Express, Vue, or direct
