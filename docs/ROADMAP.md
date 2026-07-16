@@ -44,7 +44,7 @@ criteria, and test matrix for this phase are defined in the
     *   Create a Node.js module to scan standard Steam, GOG, and Epic Games paths across Windows, Linux, and macOS.
     *   Verify valid KSP instances by checking for `KSP.exe` / `KSP.x86_64` and reading the `readme.txt` / `buildID64.txt` for the game version.
 - [ ] **2.2. Web-based File Explorer (Fallback):**
-    *   Create a backend endpoint (`GET /api/fs/list?path=...`) to return local directory structures.
+    *   Create a backend endpoint (`GET /api/v1/fs/directories?path=...`) to return local directory structures.
     *   Build a Vue.js component that allows users to manually browse their local drives to select the KSP directory if auto-discovery fails.
 - [ ] **2.3. Configuration Persistence:**
     *   Save the selected game path and preferences to a local configuration file (e.g., `config.json` in the user's OS AppData/Config folder).
