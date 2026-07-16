@@ -41,7 +41,7 @@ export class ConfigStore {
 
   async write(config: StoredConfig): Promise<void> {
     const directory = dirname(this.filePath);
-    const temporaryPath = join(directory, `.config-${process.pid}-${Date.now()}.tmp`);
+    const temporaryPath = join(directory, `.config-${process.pid}-${globalThis.crypto.randomUUID()}.tmp`);
 
     try {
       await mkdir(directory, { recursive: true });

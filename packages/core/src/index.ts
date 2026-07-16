@@ -84,7 +84,10 @@ function parseVersion(metadata: string): string | undefined {
 async function readVersion(fileSystem: FileSystemPort, path: string): Promise<string | undefined> {
   for (const file of ["readme.txt", "buildID64.txt"]) {
     try {
-      return parseVersion(await fileSystem.readText(`${path}/${file}`));
+      const version = parseVersion(await fileSystem.readText(`${path}/${file}`));
+      if (version !== undefined) {
+        return version;
+      }
     } catch {
       // Version metadata is optional; a valid executable remains authoritative.
     }

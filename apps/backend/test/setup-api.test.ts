@@ -64,4 +64,15 @@ describe("KSP setup API", () => {
     const response = await request(app).get("/api/v1/fs/directories").query({ path: join(home, "escape") });
     expect(response.status).toBe(403);
   });
+
+  it("returns unconfigured when the saved installation is no longer valid", async () => {
+    const { app, ksp } = await createTestApp();
+    await request(app).put("/api/v1/config").send({ installationPath: ksp });
+    const { unlinkSync } = await import("node:fs");
+    unlinkSync(join(ksp, "KSP.x86_64"));
+
+    const response = await request(app).get("/api/v1/config");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ configured: false });
+  });
 });

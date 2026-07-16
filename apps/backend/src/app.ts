@@ -79,7 +79,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         "manual",
       );
       if (installation === undefined) {
-        sendError(response, 422, "CONFIGURATION_INVALID", "The saved KSP installation is no longer valid.");
+        response.json(configResponseSchema.parse({ configured: false }));
         return;
       }
       response.json(configResponseSchema.parse({ configured: true, installation }));

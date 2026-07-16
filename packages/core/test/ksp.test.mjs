@@ -65,3 +65,28 @@ test("rejects a directory that only has an executable-looking name", async () =>
   const installation = await validateKspInstallation(fileSystem, "linux", "/ksp", "manual");
   assert.equal(installation, undefined);
 });
+
+test("falls back to buildID64.txt when readme.txt has no parseable version", async () => {
+  const fileSystem = {
+    async exists(path) {
+      return path.endsWith("/KSP.x86_64");
+    },
+    async isFile(path) {
+      return path.endsWith("/KSP.x86_64");
+    },
+    async realpath(path) {
+      return path;
+    },
+    async readText(path) {
+      if (path.endsWith("/readme.txt")) {
+        return "Kerbal Space Program";
+      }
+      if (path.endsWith("/buildID64.txt")) {
+        return "buildID 1.12.5";
+      }
+      throw new Error("missing");
+    },
+  };
+  const installation = await validateKspInstallation(fileSystem, "linux", "/ksp", "manual");
+  assert.equal(installation?.version, "1.12.5");
+});
