@@ -58,14 +58,14 @@
 ## Phase 4: Mod Management Engine (Core Logic)
 *Goal: Download, extract, and manage files inside the KSP `GameData` directory.*
 
-- [ ] **4.1. Game State Analysis (Inventory):**
+- [x] **4.1. Game State Analysis (Inventory):**
     *   Scan the `GameData` folder to detect currently installed mods and map them to metadata.
-- [ ] **4.2. Downloader Service:**
+- [x] **4.2. Downloader Service:**
     *   Build a robust downloader for ZIP files utilizing native Node.js v24 `fetch` and web streams for chunk streaming and progress reporting.
-- [ ] **4.3. Extractor & Installer (Unzipper):**
+- [x] **4.3. Extractor & Installer (Unzipper):**
     *   Use lightweight libraries to extract downloaded archives.
     *   Correctly map and copy files to the `GameData` folder according to the specific `.ckan` installation instructions (handling `install` stanzas).
-- [ ] **4.4. Uninstaller:**
+- [x] **4.4. Uninstaller:**
     *   Track installed files and ensure clean removal from `GameData` without leaving orphaned files.
 
 ## Phase 5: Dependency Resolver (The Brain)

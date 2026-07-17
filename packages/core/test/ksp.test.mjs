@@ -90,3 +90,36 @@ test("falls back to buildID64.txt when readme.txt has no parseable version", asy
   const installation = await validateKspInstallation(fileSystem, "linux", "/ksp", "manual");
   assert.equal(installation?.version, "1.12.5");
 });
+
+test("resolves GOG Linux installs that nest the game under game/", async () => {
+  const fileSystem = {
+    async exists() {
+      return true;
+    },
+    async isFile(path) {
+      return path === "/home/test/GOG Games/Kerbal Space Program/game/KSP.x86_64";
+    },
+    async realpath(path) {
+      return path;
+    },
+    async readText(path) {
+      if (path.endsWith("/readme.txt")) {
+        return "Version 1.12.5";
+      }
+      throw new Error("missing");
+    },
+  };
+
+  const installation = await validateKspInstallation(
+    fileSystem,
+    "linux",
+    "/home/test/GOG Games/Kerbal Space Program",
+    "gog",
+  );
+  assert.deepEqual(installation, {
+    path: "/home/test/GOG Games/Kerbal Space Program/game",
+    version: "1.12.5",
+    platform: "linux",
+    source: "gog",
+  });
+});

@@ -4,6 +4,10 @@ import {
   apiErrorSchema,
   configResponseSchema,
   directoryListingResponseSchema,
+  installModRequestSchema,
+  installedModsResponseSchema,
+  jobProgressEventSchema,
+  jobResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
   registryResponseSchema,
@@ -55,10 +59,43 @@ test("accepts registry status and mods responses", () => {
           authors: ["sarbian"],
           version: "4.2.3",
           tags: ["plugin"],
+          downloadHash: { sha256: "abc" },
+          install: [{ file: "GameData/ModuleManager", installTo: "GameData" }],
         },
       ],
     }).total,
     1,
+  );
+});
+
+test("accepts installed mods and job responses", () => {
+  assert.deepEqual(
+    installedModsResponseSchema.parse({
+      mods: [{ identifier: "ModuleManager", status: "managed", version: "4.2.3", name: "Module Manager" }],
+    }).mods[0]?.status,
+    "managed",
+  );
+  assert.equal(installModRequestSchema.parse({}).version, undefined);
+  assert.equal(installModRequestSchema.parse({ version: "1.0.0" }).version, "1.0.0");
+  assert.equal(
+    jobResponseSchema.parse({
+      jobId: "job-1",
+      kind: "install",
+      identifier: "ModuleManager",
+      status: "running",
+      phase: "downloading",
+      bytesReceived: 10,
+      bytesTotal: 100,
+    }).phase,
+    "downloading",
+  );
+  assert.equal(
+    jobProgressEventSchema.parse({
+      jobId: "job-1",
+      phase: "extracting",
+      status: "running",
+    }).phase,
+    "extracting",
   );
 });
 

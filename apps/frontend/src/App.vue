@@ -1,15 +1,26 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
-import type { CkanModule, DirectoryListingResponse, KspInstallation, RegistryResponse } from "@kraken/contracts";
+import { onMounted, onUnmounted, ref, watch } from "vue";
+import type {
+  CkanModule,
+  DirectoryListingResponse,
+  InstalledMod,
+  JobProgressEvent,
+  KspInstallation,
+  RegistryResponse,
+} from "@kraken/contracts";
 import {
   getConfig,
   getDirectories,
   getHealth,
   getInstallations,
+  getInstalledMods,
   getRegistry,
+  installMod,
   refreshRegistry,
   saveInstallation,
   searchMods,
+  uninstallMod,
+  watchJobProgress,
 } from "./api.js";
 
 const status = ref<"checking" | "ready" | "unavailable" | "error">("checking");
@@ -26,6 +37,12 @@ const searchQuery = ref("");
 const searchResults = ref<CkanModule[]>([]);
 const searchTotal = ref(0);
 const isSearching = ref(false);
+
+const installedMods = ref<InstalledMod[]>([]);
+const installingIdentifier = ref<string>();
+const uninstallingIdentifier = ref<string>();
+const jobProgress = ref<JobProgressEvent>();
+let stopWatchingJob: (() => void) | undefined;
 
 async function loadSetup(): Promise<void> {
   status.value = "checking";
@@ -45,6 +62,7 @@ async function loadSetup(): Promise<void> {
       registry.value = undefined;
       searchResults.value = [];
       searchTotal.value = 0;
+      installedMods.value = [];
     }
     status.value = "ready";
   } catch (error) {
@@ -55,12 +73,17 @@ async function loadSetup(): Promise<void> {
 
 async function loadRegistryPanel(active: KspInstallation): Promise<void> {
   registry.value = await getRegistry();
+  await loadInstalledMods();
   if (registry.value.status === "ready") {
     await runSearch(active);
   } else {
     searchResults.value = [];
     searchTotal.value = 0;
   }
+}
+
+async function loadInstalledMods(): Promise<void> {
+  installedMods.value = (await getInstalledMods()).mods;
 }
 
 async function selectInstallation(path: string): Promise<void> {
@@ -108,6 +131,7 @@ async function onRefreshRegistry(): Promise<void> {
   try {
     registry.value = await refreshRegistry();
     await runSearch(installation.value);
+    await loadInstalledMods();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "The registry could not be refreshed.";
     status.value = "error";
@@ -139,6 +163,66 @@ async function runSearch(active?: KspInstallation): Promise<void> {
   }
 }
 
+async function onInstall(mod: CkanModule): Promise<void> {
+  if (mod.download === undefined) {
+    return;
+  }
+  installingIdentifier.value = mod.identifier;
+  errorMessage.value = undefined;
+  jobProgress.value = undefined;
+  stopWatchingJob?.();
+  try {
+    const accepted = await installMod(mod.identifier, mod.version);
+    stopWatchingJob = watchJobProgress(accepted.job.jobId, (event) => {
+      jobProgress.value = event;
+      if (event.status === "succeeded") {
+        void loadInstalledMods();
+        installingIdentifier.value = undefined;
+      }
+      if (event.status === "failed") {
+        errorMessage.value = event.error ?? "Install failed.";
+        status.value = "error";
+        installingIdentifier.value = undefined;
+      }
+    });
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Install could not be started.";
+    status.value = "error";
+    installingIdentifier.value = undefined;
+  }
+}
+
+async function onUninstall(mod: InstalledMod): Promise<void> {
+  if (mod.status !== "managed") {
+    return;
+  }
+  uninstallingIdentifier.value = mod.identifier;
+  errorMessage.value = undefined;
+  try {
+    await uninstallMod(mod.identifier);
+    await loadInstalledMods();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Uninstall failed.";
+    status.value = "error";
+  } finally {
+    uninstallingIdentifier.value = undefined;
+  }
+}
+
+function progressLabel(event: JobProgressEvent | undefined): string {
+  if (event === undefined) {
+    return "";
+  }
+  if (event.phase === "downloading" && event.bytesReceived !== undefined) {
+    const total = event.bytesTotal;
+    if (total !== undefined && total > 0) {
+      return `Downloading… ${Math.min(100, Math.round((event.bytesReceived / total) * 100))}%`;
+    }
+    return `Downloading… ${event.bytesReceived} bytes`;
+  }
+  return event.message ?? event.phase;
+}
+
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 watch(searchQuery, () => {
   if (installation.value === undefined || registry.value?.status !== "ready") {
@@ -153,6 +237,9 @@ watch(searchQuery, () => {
 });
 
 onMounted(loadSetup);
+onUnmounted(() => {
+  stopWatchingJob?.();
+});
 </script>
 
 <template>
@@ -181,6 +268,32 @@ onMounted(loadSetup);
         <h2 class="font-semibold text-emerald-300">Active installation</h2>
         <p class="mt-2 break-all font-mono text-sm">{{ installation.path }}</p>
         <p class="mt-2 text-sm text-slate-300">KSP version: {{ installation.version ?? "Unknown" }}</p>
+      </section>
+
+      <section v-if="installation !== undefined" class="mt-8 rounded-lg border border-slate-700 p-5">
+        <h2 class="font-semibold">Installed mods</h2>
+        <p v-if="installedMods.length === 0" class="mt-2 text-slate-300">No managed or detected mods yet.</p>
+        <ul v-else class="mt-3 space-y-3">
+          <li v-for="mod in installedMods" :key="mod.identifier" class="rounded-lg border border-slate-700 p-3">
+            <p class="font-semibold">
+              {{ mod.name ?? mod.identifier }}
+              <span v-if="mod.version" class="font-mono text-sm text-slate-400">{{ mod.version }}</span>
+            </p>
+            <p class="mt-1 text-sm text-slate-400">{{ mod.identifier }} · {{ mod.status }}</p>
+            <button
+              v-if="mod.status === 'managed'"
+              class="mt-3 rounded-md border border-rose-400 px-3 py-1 text-sm font-semibold text-rose-300 hover:bg-rose-400/10 disabled:opacity-60"
+              type="button"
+              :disabled="uninstallingIdentifier === mod.identifier"
+              @click="onUninstall(mod)"
+            >
+              {{ uninstallingIdentifier === mod.identifier ? "Uninstalling…" : "Uninstall" }}
+            </button>
+          </li>
+        </ul>
+        <p v-if="jobProgress !== undefined" class="mt-4 text-sm text-cyan-300" aria-live="polite">
+          {{ progressLabel(jobProgress) }}
+        </p>
       </section>
 
       <section v-if="installation !== undefined && registry !== undefined" class="mt-8 rounded-lg border border-slate-700 p-5">
@@ -220,6 +333,15 @@ onMounted(loadSetup);
               <p class="font-semibold">{{ mod.name }} <span class="font-mono text-sm text-slate-400">{{ mod.version }}</span></p>
               <p class="mt-1 text-sm text-slate-400">{{ mod.identifier }} · {{ mod.authors.join(", ") || "Unknown author" }}</p>
               <p v-if="mod.abstract" class="mt-2 line-clamp-2 text-sm text-slate-300">{{ mod.abstract }}</p>
+              <button
+                v-if="mod.download !== undefined"
+                class="mt-3 rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+                type="button"
+                :disabled="installingIdentifier === mod.identifier"
+                @click="onInstall(mod)"
+              >
+                {{ installingIdentifier === mod.identifier ? "Installing…" : "Install" }}
+              </button>
             </li>
           </ul>
         </div>

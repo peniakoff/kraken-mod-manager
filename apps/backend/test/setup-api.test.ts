@@ -1,9 +1,14 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
+import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
+import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { TarGzArchive } from "../src/adapters/tar-gz-archive.js";
+import { ZipArchive } from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
+import { InstallService } from "../src/install-service.js";
+import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { PlatformPort } from "@kraken/core";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
@@ -20,19 +25,29 @@ async function createTestApp() {
   writeFileSync(join(ksp, "KSP.x86_64"), "");
   writeFileSync(join(ksp, "readme.txt"), "Version 1.12.5");
   const platform: PlatformPort = { platform: "linux", homeDirectory: home, environment: {} };
+  const registryService = new RegistryService(
+    {
+      async get() {
+        throw new Error("network unused in setup tests");
+      },
+    },
+    new TarGzArchive(),
+    new RegistryCacheStore(join(home, "cache", "registry.json")),
+  );
   const app = createApp("test", {
     fileSystem: new NodeFileSystem(),
     platform,
     configStore: new ConfigStore(join(home, "config", "config.json")),
     directoryBrowser: new DirectoryBrowser([home]),
-    registryService: new RegistryService(
-      {
-        async get() {
-          throw new Error("network unused in setup tests");
-        },
-      },
-      new TarGzArchive(),
-      new RegistryCacheStore(join(home, "cache", "registry.json")),
+    registryService,
+    installService: new InstallService(
+      new NodeFileSystem(),
+      registryService,
+      new StreamingHttp(),
+      new ZipArchive(),
+      new InstallManifestStore(join(home, "data", "install-manifest.json")),
+      new JobStore(),
+      join(home, "cache", "downloads"),
     ),
   });
   return { app, home, ksp };

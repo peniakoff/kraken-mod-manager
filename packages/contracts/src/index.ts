@@ -71,6 +71,23 @@ export const registryResponseSchema = z.object({
 
 export type RegistryResponse = z.infer<typeof registryResponseSchema>;
 
+export const ckanInstallStanzaSchema = z.object({
+  file: z.string().min(1).optional(),
+  find: z.string().min(1).optional(),
+  findRegexp: z.string().min(1).optional(),
+  installTo: z.string().min(1).optional(),
+  as: z.string().min(1).optional(),
+});
+
+export type CkanInstallStanza = z.infer<typeof ckanInstallStanzaSchema>;
+
+export const ckanDownloadHashSchema = z.object({
+  sha1: z.string().min(1).optional(),
+  sha256: z.string().min(1).optional(),
+});
+
+export type CkanDownloadHash = z.infer<typeof ckanDownloadHashSchema>;
+
 export const ckanModuleSchema = z.object({
   identifier: z.string().min(1),
   name: z.string().min(1),
@@ -83,6 +100,8 @@ export const ckanModuleSchema = z.object({
   tags: z.array(z.string().min(1)),
   download: z.string().min(1).optional(),
   downloadSize: z.number().int().nonnegative().optional(),
+  downloadHash: ckanDownloadHashSchema.optional(),
+  install: z.array(ckanInstallStanzaSchema).optional(),
 });
 
 export type CkanModule = z.infer<typeof ckanModuleSchema>;
@@ -103,3 +122,66 @@ export const modsResponseSchema = z.object({
 });
 
 export type ModsResponse = z.infer<typeof modsResponseSchema>;
+
+export const installedModStatusSchema = z.enum(["managed", "detected"]);
+
+export const installedModSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1).optional(),
+  version: z.string().min(1).optional(),
+  status: installedModStatusSchema,
+  files: z.array(z.string().min(1)).optional(),
+});
+
+export type InstalledMod = z.infer<typeof installedModSchema>;
+
+export const installedModsResponseSchema = z.object({
+  mods: z.array(installedModSchema),
+});
+
+export type InstalledModsResponse = z.infer<typeof installedModsResponseSchema>;
+
+export const installModRequestSchema = z.object({
+  version: z.string().min(1).max(128).optional(),
+});
+
+export type InstallModRequest = z.infer<typeof installModRequestSchema>;
+
+export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
+
+export const jobPhaseSchema = z.enum(["queued", "downloading", "verifying", "extracting", "installing", "done", "failed"]);
+
+export type JobPhase = z.infer<typeof jobPhaseSchema>;
+
+export const jobResponseSchema = z.object({
+  jobId: z.string().min(1),
+  kind: z.literal("install"),
+  identifier: z.string().min(1),
+  version: z.string().min(1).optional(),
+  status: jobStatusSchema,
+  phase: jobPhaseSchema,
+  message: z.string().optional(),
+  bytesReceived: z.number().int().nonnegative().optional(),
+  bytesTotal: z.number().int().nonnegative().optional(),
+  error: z.string().optional(),
+});
+
+export type JobResponse = z.infer<typeof jobResponseSchema>;
+
+export const installAcceptedResponseSchema = z.object({
+  job: jobResponseSchema,
+});
+
+export type InstallAcceptedResponse = z.infer<typeof installAcceptedResponseSchema>;
+
+export const jobProgressEventSchema = z.object({
+  jobId: z.string().min(1),
+  phase: jobPhaseSchema,
+  status: jobStatusSchema,
+  message: z.string().optional(),
+  bytesReceived: z.number().int().nonnegative().optional(),
+  bytesTotal: z.number().int().nonnegative().optional(),
+  error: z.string().optional(),
+});
+
+export type JobProgressEvent = z.infer<typeof jobProgressEventSchema>;

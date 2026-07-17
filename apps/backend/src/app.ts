@@ -3,7 +3,12 @@ import {
   configResponseSchema,
   directoryListingResponseSchema,
   healthResponseSchema,
+  installAcceptedResponseSchema,
+  installModRequestSchema,
+  installedModsResponseSchema,
   installationsResponseSchema,
+  jobProgressEventSchema,
+  jobResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
   registryResponseSchema,
@@ -19,12 +24,30 @@ import express from "express";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigStore, ConfigStoreError } from "./adapters/config-store.js";
+import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
 import { NodeFileSystem } from "./adapters/node-file-system.js";
 import { NodeHttp } from "./adapters/node-http.js";
 import { RegistryCacheStore, RegistryCacheError } from "./adapters/registry-cache-store.js";
+import { StreamingHttp } from "./adapters/streaming-http.js";
 import { TarGzArchive } from "./adapters/tar-gz-archive.js";
+import { ZipArchive } from "./adapters/zip-archive.js";
 import { DirectoryBrowser, DirectoryBrowserError } from "./directory-browser.js";
-import { getBrowseRoots, getConfigFilePath, getPlatformPort, getRegistryCacheFilePath } from "./platform.js";
+import {
+  InstallService,
+  InstallServiceError,
+  StreamingHttpError,
+  ZipArchiveError,
+  InstallPolicyError,
+} from "./install-service.js";
+import { JobStore } from "./job-store.js";
+import {
+  getBrowseRoots,
+  getConfigFilePath,
+  getDownloadCacheDirectory,
+  getInstallManifestFilePath,
+  getPlatformPort,
+  getRegistryCacheFilePath,
+} from "./platform.js";
 import { RegistryService, RegistryServiceError } from "./registry-service.js";
 
 export interface AppDependencies {
@@ -33,17 +56,32 @@ export interface AppDependencies {
   configStore: ConfigStore;
   directoryBrowser: DirectoryBrowser;
   registryService: RegistryService;
+  installService: InstallService;
   frontendDirectory?: string;
 }
 
 export function createDefaultDependencies(frontendDirectory = process.env.KMM_FRONTEND_DIR): AppDependencies {
   const platform = getPlatformPort();
+  const registryService = new RegistryService(
+    new NodeHttp(),
+    new TarGzArchive(),
+    new RegistryCacheStore(getRegistryCacheFilePath(platform)),
+  );
   const dependencies: AppDependencies = {
     fileSystem: new NodeFileSystem(),
     platform,
     configStore: new ConfigStore(getConfigFilePath(platform)),
     directoryBrowser: new DirectoryBrowser(getBrowseRoots(platform)),
-    registryService: new RegistryService(new NodeHttp(), new TarGzArchive(), new RegistryCacheStore(getRegistryCacheFilePath(platform))),
+    registryService,
+    installService: new InstallService(
+      new NodeFileSystem(),
+      registryService,
+      new StreamingHttp(),
+      new ZipArchive(),
+      new InstallManifestStore(getInstallManifestFilePath(platform)),
+      new JobStore(),
+      getDownloadCacheDirectory(platform),
+    ),
   };
   if (frontendDirectory !== undefined) {
     dependencies.frontendDirectory = frontendDirectory;
@@ -198,6 +236,116 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
   });
 
+  app.get("/api/v1/installed-mods", async (_request, response, next) => {
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      response.json(installedModsResponseSchema.parse({ mods: await dependencies.installService.listInstalled(kspPath) }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/mods/:identifier/install", async (request, response, next) => {
+    const body = installModRequestSchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      sendError(response, 400, "INVALID_REQUEST", "Invalid install request.");
+      return;
+    }
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0) {
+      sendError(response, 400, "INVALID_REQUEST", "A mod identifier is required.");
+      return;
+    }
+
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      await dependencies.registryService.ensureLoaded();
+      const job = dependencies.installService.startInstall(kspPath, identifier, body.data.version);
+      response.status(202).json(installAcceptedResponseSchema.parse({ job }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/v1/mods/:identifier", async (request, response, next) => {
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0) {
+      sendError(response, 400, "INVALID_REQUEST", "A mod identifier is required.");
+      return;
+    }
+
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      await dependencies.installService.uninstall(kspPath, identifier);
+      response.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/jobs/:jobId", (request, response, next) => {
+    try {
+      response.json(jobResponseSchema.parse(dependencies.installService.getJob(request.params.jobId)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/jobs/:jobId/events", (request, response, next) => {
+    try {
+      const job = dependencies.installService.getJob(request.params.jobId);
+      response.setHeader("Content-Type", "text/event-stream");
+      response.setHeader("Cache-Control", "no-cache");
+      response.setHeader("Connection", "keep-alive");
+      response.flushHeaders?.();
+
+      const writeEvent = (event: unknown): void => {
+        response.write(`data: ${JSON.stringify(jobProgressEventSchema.parse(event))}\n\n`);
+      };
+
+      writeEvent({
+        jobId: job.jobId,
+        phase: job.phase,
+        status: job.status,
+        ...(job.message !== undefined ? { message: job.message } : {}),
+        ...(job.bytesReceived !== undefined ? { bytesReceived: job.bytesReceived } : {}),
+        ...(job.bytesTotal !== undefined ? { bytesTotal: job.bytesTotal } : {}),
+        ...(job.error !== undefined ? { error: job.error } : {}),
+      });
+
+      if (job.status === "succeeded" || job.status === "failed") {
+        response.end();
+        return;
+      }
+
+      const unsubscribe = dependencies.installService.subscribe(job.jobId, (event) => {
+        writeEvent(event);
+        if (event.status === "succeeded" || event.status === "failed") {
+          unsubscribe();
+          response.end();
+        }
+      });
+
+      request.on("close", () => {
+        unsubscribe();
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   const frontendDirectory = dependencies.frontendDirectory;
   if (frontendDirectory !== undefined && existsSync(frontendDirectory)) {
     app.use(express.static(frontendDirectory));
@@ -227,10 +375,44 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       sendError(response, error.code === "REGISTRY_REFRESH_FAILED" ? 503 : 500, error.code, error.message);
       return;
     }
+    if (error instanceof InstallManifestError) {
+      sendError(response, 500, "INSTALL_MANIFEST_ERROR", error.message);
+      return;
+    }
+    if (error instanceof InstallServiceError) {
+      const status =
+        error.code === "NOT_CONFIGURED"
+          ? 409
+          : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
+            ? 404
+            : error.code === "NOT_MANAGED" || error.code === "NO_DOWNLOAD"
+              ? 422
+              : 500;
+      sendError(response, status, error.code, error.message);
+      return;
+    }
+    if (error instanceof StreamingHttpError || error instanceof ZipArchiveError || error instanceof InstallPolicyError) {
+      sendError(response, 422, error instanceof InstallPolicyError ? error.code : error.name, error.message);
+      return;
+    }
     sendError(response, 500, "INTERNAL_ERROR", "The local service could not complete the request.");
   });
 
   return app;
+}
+
+async function requireConfiguredInstallation(dependencies: AppDependencies): Promise<string | undefined> {
+  const config = await dependencies.configStore.read();
+  if (config === undefined) {
+    return undefined;
+  }
+  const installation = await validateKspInstallation(
+    dependencies.fileSystem,
+    dependencies.platform.platform,
+    config.activeInstallationPath,
+    "manual",
+  );
+  return installation?.path;
 }
 
 function sendError(response: express.Response, status: number, code: string, message: string): void {

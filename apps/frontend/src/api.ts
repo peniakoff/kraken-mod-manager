@@ -3,13 +3,21 @@ import {
   configResponseSchema,
   directoryListingResponseSchema,
   healthResponseSchema,
+  installAcceptedResponseSchema,
+  installedModsResponseSchema,
   installationsResponseSchema,
+  jobProgressEventSchema,
+  jobResponseSchema,
   modsResponseSchema,
   registryResponseSchema,
   type ConfigResponse,
   type DirectoryListingResponse,
   type HealthResponse,
+  type InstallAcceptedResponse,
+  type InstalledModsResponse,
   type InstallationsResponse,
+  type JobProgressEvent,
+  type JobResponse,
   type ModsResponse,
   type RegistryResponse,
 } from "@kraken/contracts";
@@ -78,6 +86,50 @@ export async function searchMods(options: {
   }
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return request(`/api/v1/mods${query}`, modsResponseSchema);
+}
+
+export async function getInstalledMods(): Promise<InstalledModsResponse> {
+  return request("/api/v1/installed-mods", installedModsResponseSchema);
+}
+
+export async function installMod(identifier: string, version?: string): Promise<InstallAcceptedResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/install`, installAcceptedResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(version === undefined ? {} : { version }),
+  });
+}
+
+export async function uninstallMod(identifier: string): Promise<void> {
+  const response = await fetch(`/api/v1/mods/${encodeURIComponent(identifier)}`, { method: "DELETE" });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => undefined);
+    const error = apiErrorSchema.safeParse(payload);
+    throw new Error(error.success ? error.data.message : `Request failed with HTTP ${response.status}.`);
+  }
+}
+
+export async function getJob(jobId: string): Promise<JobResponse> {
+  return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, jobResponseSchema);
+}
+
+export function watchJobProgress(jobId: string, onEvent: (event: JobProgressEvent) => void): () => void {
+  const source = new EventSource(`/api/v1/jobs/${encodeURIComponent(jobId)}/events`);
+  source.onmessage = (message) => {
+    const parsed = jobProgressEventSchema.safeParse(JSON.parse(message.data as string));
+    if (parsed.success) {
+      onEvent(parsed.data);
+      if (parsed.data.status === "succeeded" || parsed.data.status === "failed") {
+        source.close();
+      }
+    }
+  };
+  source.onerror = () => {
+    source.close();
+  };
+  return () => {
+    source.close();
+  };
 }
 
 async function request<T>(

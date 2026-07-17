@@ -1,9 +1,14 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
+import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
+import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
+import { ZipArchive } from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
+import { InstallService } from "../src/install-service.js";
+import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { HttpPort, PlatformPort } from "@kraken/core";
 import { gzipSync } from "node:zlib";
@@ -68,14 +73,36 @@ async function createRegistryTestApp(http: HttpPort = { async get() { return fix
     new RegistryCacheStore(join(home, "cache", "registry.json")),
     "https://example.test/CKAN-meta.tar.gz",
   );
+  const installService = new InstallService(
+    new NodeFileSystem(),
+    registryService,
+    new StreamingHttp(),
+    new ZipArchive(),
+    new InstallManifestStore(join(home, "data", "install-manifest.json")),
+    new JobStore(),
+    join(home, "cache", "downloads"),
+  );
   const app = createApp("test", {
     fileSystem: new NodeFileSystem(),
     platform,
     configStore: new ConfigStore(join(home, "config", "config.json")),
     directoryBrowser: new DirectoryBrowser([home]),
     registryService,
+    installService,
   });
   return { app, home, registryService };
+}
+
+function createInstallService(home: string, registryService: RegistryService): InstallService {
+  return new InstallService(
+    new NodeFileSystem(),
+    registryService,
+    new StreamingHttp(),
+    new ZipArchive(),
+    new InstallManifestStore(join(home, "data", "install-manifest.json")),
+    new JobStore(),
+    join(home, "cache", "downloads"),
+  );
 }
 
 describe("CKAN registry API", () => {
@@ -115,20 +142,22 @@ describe("CKAN registry API", () => {
     expect(byTag.status).toBe(200);
     expect(byTag.body.total).toBe(2);
 
+    const restoredRegistry = new RegistryService(
+      {
+        async get() {
+          throw new Error("network should not be used when cache exists");
+        },
+      },
+      new TarGzArchive(),
+      new RegistryCacheStore(join(home, "cache", "registry.json")),
+    );
     const restored = createApp("test", {
       fileSystem: new NodeFileSystem(),
       platform: { platform: "linux", homeDirectory: home, environment: {} },
       configStore: new ConfigStore(join(home, "config", "config.json")),
       directoryBrowser: new DirectoryBrowser([home]),
-      registryService: new RegistryService(
-        {
-          async get() {
-            throw new Error("network should not be used when cache exists");
-          },
-        },
-        new TarGzArchive(),
-        new RegistryCacheStore(join(home, "cache", "registry.json")),
-      ),
+      registryService: restoredRegistry,
+      installService: createInstallService(home, restoredRegistry),
     });
 
     const status = await request(restored).get("/api/v1/registry");

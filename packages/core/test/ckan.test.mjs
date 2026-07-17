@@ -39,6 +39,34 @@ test("parses a valid .ckan document and normalizes authors", () => {
   });
 });
 
+test("parses install stanzas and download hashes", () => {
+  const module = parseCkanDocument({
+    identifier: "ExampleMod",
+    name: "Example",
+    author: "Author",
+    version: "1.0.0",
+    download_hash: { sha256: "ABC", sha1: "def" },
+    install: [
+      {
+        file: "GameData/Example",
+        install_to: "GameData",
+        as: "ExampleRenamed",
+      },
+      {
+        find: "Plugins",
+        find_regexp: ".*\\.dll$",
+        install_to: "GameData",
+      },
+    ],
+  });
+
+  assert.deepEqual(module?.downloadHash, { sha256: "abc", sha1: "def" });
+  assert.deepEqual(module?.install, [
+    { file: "GameData/Example", installTo: "GameData", as: "ExampleRenamed" },
+    { find: "Plugins", findRegexp: ".*\\.dll$", installTo: "GameData" },
+  ]);
+});
+
 test("rejects invalid .ckan payloads", () => {
   assert.equal(parseCkanDocument(null), undefined);
   assert.equal(parseCkanDocument({ name: "Only name" }), undefined);
