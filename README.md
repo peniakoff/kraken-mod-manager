@@ -36,7 +36,7 @@ port, and `KMM_OPEN_BROWSER=false` to suppress opening the default browser.
 - `packages/contracts` — validated API contracts shared between client and
   server.
 - `packages/core` — framework-independent KSP detection, CKAN metadata parsing,
-  and in-memory registry indexing.
+  registry indexing, and install/uninstall policy.
 
 ## KSP setup
 
@@ -63,9 +63,22 @@ build a local searchable index. The cache is stored separately from config:
 - Linux: `$XDG_CACHE_HOME/kraken-mod-manager` (or `~/.cache/kraken-mod-manager`)
 - macOS: `~/Library/Caches/Kraken Mod Manager`
 
+## Mod install and uninstall
+
+Kraken downloads mod ZIPs, verifies `download_hash` when present, extracts with
+Zip Slip rejection, and installs according to `.ckan` `install` stanzas (or
+CKAN defaults). Managed installs are tracked in `install-manifest.json`;
+uninstall removes only those tracked files. Inventory also detects top-level
+`GameData` folders that match known registry identifiers.
+
+Install progress is streamed with Server-Sent Events on
+`GET /api/v1/jobs/:jobId/events`.
+
 The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
 `GET`/`PUT /api/v1/config`, `GET /api/v1/fs/directories`, `GET /api/v1/registry`,
-`POST /api/v1/registry/refresh`, and `GET /api/v1/mods`.
+`POST /api/v1/registry/refresh`, `GET /api/v1/mods`, `GET /api/v1/installed-mods`,
+`POST /api/v1/mods/:identifier/install`, `DELETE /api/v1/mods/:identifier`,
+`GET /api/v1/jobs/:jobId`, and `GET /api/v1/jobs/:jobId/events`.
 
 ## Verification
 

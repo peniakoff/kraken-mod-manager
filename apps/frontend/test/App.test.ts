@@ -43,6 +43,7 @@ describe("App", () => {
         ),
       )
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "missing", moduleCount: 0 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mods: [] }), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -67,12 +68,14 @@ describe("App", () => {
                 version: "4.2.3",
                 tags: ["plugin"],
                 abstract: "Patching plugin",
+                download: "https://example.test/mm.zip",
               },
             ],
           }),
           { status: 200 },
         ),
-      );
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mods: [] }), { status: 200 }));
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -81,6 +84,7 @@ describe("App", () => {
     await vi.waitFor(() => {
       expect(wrapper.text()).toContain("Active installation");
       expect(wrapper.text()).toContain("No local metadata cache yet");
+      expect(wrapper.text()).toContain("Installed mods");
     });
 
     const refreshButton = wrapper.findAll("button").find((button) => button.text().includes("Refresh registry"));
@@ -90,6 +94,7 @@ describe("App", () => {
     await vi.waitFor(() => {
       expect(wrapper.text()).toContain("1 modules indexed");
       expect(wrapper.text()).toContain("Module Manager");
+      expect(wrapper.text()).toContain("Install");
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/registry/refresh", expect.objectContaining({ method: "POST" }));

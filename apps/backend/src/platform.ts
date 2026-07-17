@@ -53,6 +53,53 @@ export function getRegistryCacheFilePath(platform: PlatformPort): string {
   }
 }
 
+export function getInstallManifestFilePath(platform: PlatformPort): string {
+  switch (platform.platform) {
+    case "win32":
+      return join(
+        platform.environment.LOCALAPPDATA ?? join(platform.homeDirectory, "AppData", "Local"),
+        "Kraken Mod Manager",
+        "install-manifest.json",
+      );
+    case "linux":
+      return join(
+        platform.environment.XDG_DATA_HOME ?? join(platform.homeDirectory, ".local", "share"),
+        "kraken-mod-manager",
+        "install-manifest.json",
+      );
+    case "darwin":
+      return join(platform.homeDirectory, "Library", "Application Support", "Kraken Mod Manager", "install-manifest.json");
+    default: {
+      const exhaustive: never = platform.platform;
+      throw new Error(`Unsupported platform: ${exhaustive}`);
+    }
+  }
+}
+
+export function getDownloadCacheDirectory(platform: PlatformPort): string {
+  switch (platform.platform) {
+    case "win32":
+      return join(
+        platform.environment.LOCALAPPDATA ?? join(platform.homeDirectory, "AppData", "Local"),
+        "Kraken Mod Manager",
+        "Cache",
+        "downloads",
+      );
+    case "linux":
+      return join(
+        platform.environment.XDG_CACHE_HOME ?? join(platform.homeDirectory, ".cache"),
+        "kraken-mod-manager",
+        "downloads",
+      );
+    case "darwin":
+      return join(platform.homeDirectory, "Library", "Caches", "Kraken Mod Manager", "downloads");
+    default: {
+      const exhaustive: never = platform.platform;
+      throw new Error(`Unsupported platform: ${exhaustive}`);
+    }
+  }
+}
+
 export function getBrowseRoots(platform: PlatformPort): string[] {
   if (platform.platform === "win32") {
     return Array.from({ length: 26 }, (_, index) => `${String.fromCharCode(65 + index)}:\\`);

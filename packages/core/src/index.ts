@@ -13,12 +13,28 @@ export {
   refreshRegistry,
   type ArchiveEntry,
   type ArchivePort,
+  type CkanDownloadHash,
+  type CkanInstallStanza,
   type CkanModule,
   type CkanSearchOptions,
   type CkanSearchResult,
   type HttpPort,
   type RegistrySnapshot,
 } from "./ckan.js";
+
+export {
+  buildInventory,
+  InstallPolicyError,
+  isAllowedDestination,
+  isSafeArchivePath,
+  normalizeSlashPath,
+  resolveInstallMappings,
+  verifyDownloadHash,
+  type InstallMapping,
+  type InstalledModStatus,
+  type InstalledModSummary,
+  type ManagedModRecord,
+} from "./install.js";
 
 export type KspPlatform = "win32" | "linux" | "darwin";
 export type InstallationSource = "steam" | "gog" | "epic" | "manual";
@@ -126,16 +142,48 @@ export async function validateKspInstallation(
     return undefined;
   }
 
-  const executables = executableNames(platform);
-  const isValid = await Promise.all(executables.map((file) => fileSystem.isFile(`${canonicalPath}/${file}`)));
-  if (!isValid.some(Boolean)) {
+  const root = await resolveInstallationRoot(fileSystem, platform, canonicalPath);
+  if (root === undefined) {
     return undefined;
   }
 
-  const version = await readVersion(fileSystem, canonicalPath);
+  const version = await readVersion(fileSystem, root);
   return version === undefined
-    ? { path: canonicalPath, platform, source }
-    : { path: canonicalPath, version, platform, source };
+    ? { path: root, platform, source }
+    : { path: root, version, platform, source };
+}
+
+async function resolveInstallationRoot(
+  fileSystem: FileSystemPort,
+  platform: KspPlatform,
+  canonicalPath: string,
+): Promise<string | undefined> {
+  if (await hasKspExecutable(fileSystem, platform, canonicalPath)) {
+    return canonicalPath;
+  }
+
+  // GOG Linux (and some Galaxy layouts) wrap the game under a `game/` subdirectory.
+  const gogGamePath = `${canonicalPath}/game`;
+  let nestedPath: string;
+  try {
+    nestedPath = await fileSystem.realpath(gogGamePath);
+  } catch {
+    return undefined;
+  }
+  if (await hasKspExecutable(fileSystem, platform, nestedPath)) {
+    return nestedPath;
+  }
+  return undefined;
+}
+
+async function hasKspExecutable(
+  fileSystem: FileSystemPort,
+  platform: KspPlatform,
+  root: string,
+): Promise<boolean> {
+  const executables = executableNames(platform);
+  const results = await Promise.all(executables.map((file) => fileSystem.isFile(`${root}/${file}`)));
+  return results.some(Boolean);
 }
 
 export async function discoverInstallations(

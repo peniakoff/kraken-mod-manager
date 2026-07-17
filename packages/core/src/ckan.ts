@@ -2,6 +2,19 @@
  * CKAN metadata parsing and in-memory indexing. I/O is injected via ports.
  */
 
+export interface CkanInstallStanza {
+  file?: string;
+  find?: string;
+  findRegexp?: string;
+  installTo?: string;
+  as?: string;
+}
+
+export interface CkanDownloadHash {
+  sha1?: string;
+  sha256?: string;
+}
+
 export interface CkanModule {
   identifier: string;
   name: string;
@@ -14,6 +27,8 @@ export interface CkanModule {
   tags: string[];
   download?: string;
   downloadSize?: number;
+  downloadHash?: CkanDownloadHash;
+  install?: CkanInstallStanza[];
 }
 
 export interface HttpPort {
@@ -101,6 +116,16 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     module.downloadSize = downloadSize;
   }
 
+  const downloadHash = parseDownloadHash(document.download_hash);
+  if (downloadHash !== undefined) {
+    module.downloadHash = downloadHash;
+  }
+
+  const install = parseInstallStanzas(document.install);
+  if (install !== undefined) {
+    module.install = install;
+  }
+
   return module;
 }
 
@@ -160,6 +185,10 @@ export class CkanIndex {
 
   get size(): number {
     return this.modules.length;
+  }
+
+  findByIdentifier(identifier: string): CkanModule[] {
+    return this.modules.filter((module) => module.identifier === identifier);
   }
 
   search(options: CkanSearchOptions = {}): CkanSearchResult {
@@ -314,6 +343,71 @@ function normalizeTags(value: unknown): string[] {
     .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function parseDownloadHash(value: unknown): CkanDownloadHash | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const hash: CkanDownloadHash = {};
+  const sha1 = asNonEmptyString(raw.sha1);
+  if (sha1 !== undefined) {
+    hash.sha1 = sha1.toLowerCase();
+  }
+  const sha256 = asNonEmptyString(raw.sha256);
+  if (sha256 !== undefined) {
+    hash.sha256 = sha256.toLowerCase();
+  }
+  return hash.sha1 !== undefined || hash.sha256 !== undefined ? hash : undefined;
+}
+
+function parseInstallStanzas(value: unknown): CkanInstallStanza[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const stanzas: CkanInstallStanza[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const raw = entry as Record<string, unknown>;
+    const stanza: CkanInstallStanza = {};
+    const file = asNonEmptyString(raw.file);
+    if (file !== undefined) {
+      stanza.file = normalizeArchivePath(file);
+    }
+    const find = asNonEmptyString(raw.find);
+    if (find !== undefined) {
+      stanza.find = find;
+    }
+    const findRegexp = asNonEmptyString(raw.find_regexp);
+    if (findRegexp !== undefined) {
+      stanza.findRegexp = findRegexp;
+    }
+    const installTo = asNonEmptyString(raw.install_to);
+    if (installTo !== undefined) {
+      stanza.installTo = normalizeArchivePath(installTo);
+    }
+    const asName = asNonEmptyString(raw.as);
+    if (asName !== undefined) {
+      stanza.as = asName;
+    }
+    if (
+      stanza.file !== undefined ||
+      stanza.find !== undefined ||
+      stanza.findRegexp !== undefined ||
+      stanza.installTo !== undefined ||
+      stanza.as !== undefined
+    ) {
+      stanzas.push(stanza);
+    }
+  }
+  return stanzas.length > 0 ? stanzas : undefined;
+}
+
+function normalizeArchivePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
 function splitVersion(version: string): { epoch: number; parts: Array<{ numeric: number; text: string }> } {

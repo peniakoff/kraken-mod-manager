@@ -39,6 +39,34 @@ test("parses a valid .ckan document and normalizes authors", () => {
   });
 });
 
+test("parses install stanzas and download hashes", () => {
+  const module = parseCkanDocument({
+    identifier: "ExampleMod",
+    name: "Example",
+    author: "Author",
+    version: "1.0.0",
+    download_hash: { sha256: "ABC", sha1: "def" },
+    install: [
+      {
+        file: "GameData/Example",
+        install_to: "GameData",
+        as: "ExampleRenamed",
+      },
+      {
+        find: "Plugins",
+        find_regexp: ".*\\.dll$",
+        install_to: "GameData",
+      },
+    ],
+  });
+
+  assert.deepEqual(module?.downloadHash, { sha256: "abc", sha1: "def" });
+  assert.deepEqual(module?.install, [
+    { file: "GameData/Example", installTo: "GameData", as: "ExampleRenamed" },
+    { find: "Plugins", findRegexp: ".*\\.dll$", installTo: "GameData" },
+  ]);
+});
+
 test("rejects invalid .ckan payloads", () => {
   assert.equal(parseCkanDocument(null), undefined);
   assert.equal(parseCkanDocument({ name: "Only name" }), undefined);
@@ -106,6 +134,11 @@ test("indexes latest version per identifier and supports search filters", () => 
 
   const compatible = index.search({ compatibleWith: "1.12.5", limit: 10, offset: 0 });
   assert.equal(compatible.total, 2);
+
+  assert.deepEqual(
+    index.findByIdentifier("MechJeb2").map((module) => module.version),
+    ["2.14.0", "2.15.0"],
+  );
 });
 
 test("compares CKAN versions with epochs", () => {

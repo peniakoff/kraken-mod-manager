@@ -1,5 +1,6 @@
 import {
   CkanIndex,
+  compareCkanVersions,
   refreshRegistry,
   type ArchivePort,
   type CkanModule,
@@ -64,6 +65,19 @@ export class RegistryService {
 
   search(options: CkanSearchOptions): CkanSearchResult {
     return this.index.search(options);
+  }
+
+  findModule(identifier: string, version?: string): CkanModule | undefined {
+    const matches = this.index.findByIdentifier(identifier);
+    if (matches.length === 0) {
+      return undefined;
+    }
+    if (version !== undefined) {
+      return matches.find((module) => module.version === version);
+    }
+    return matches.reduce((best, current) =>
+      compareCkanVersions(current.version, best.version) > 0 ? current : best,
+    );
   }
 
   async refresh(): Promise<RegistryStatus> {
