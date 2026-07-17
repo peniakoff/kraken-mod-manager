@@ -4,10 +4,14 @@ import {
   directoryListingResponseSchema,
   healthResponseSchema,
   installationsResponseSchema,
+  modsResponseSchema,
+  registryResponseSchema,
   type ConfigResponse,
   type DirectoryListingResponse,
   type HealthResponse,
   type InstallationsResponse,
+  type ModsResponse,
+  type RegistryResponse,
 } from "@kraken/contracts";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -39,6 +43,41 @@ export async function saveInstallation(installationPath: string): Promise<Config
 export async function getDirectories(path?: string): Promise<DirectoryListingResponse> {
   const query = path === undefined ? "" : `?${new URLSearchParams({ path })}`;
   return request(`/api/v1/fs/directories${query}`, directoryListingResponseSchema);
+}
+
+export async function getRegistry(): Promise<RegistryResponse> {
+  return request("/api/v1/registry", registryResponseSchema);
+}
+
+export async function refreshRegistry(): Promise<RegistryResponse> {
+  return request("/api/v1/registry/refresh", registryResponseSchema, { method: "POST" });
+}
+
+export async function searchMods(options: {
+  q?: string;
+  tag?: string;
+  compatibleWith?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<ModsResponse> {
+  const params = new URLSearchParams();
+  if (options.q !== undefined && options.q.length > 0) {
+    params.set("q", options.q);
+  }
+  if (options.tag !== undefined && options.tag.length > 0) {
+    params.set("tag", options.tag);
+  }
+  if (options.compatibleWith !== undefined && options.compatibleWith.length > 0) {
+    params.set("compatibleWith", options.compatibleWith);
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.offset !== undefined) {
+    params.set("offset", String(options.offset));
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return request(`/api/v1/mods${query}`, modsResponseSchema);
 }
 
 async function request<T>(

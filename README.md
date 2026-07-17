@@ -35,7 +35,8 @@ port, and `KMM_OPEN_BROWSER=false` to suppress opening the default browser.
 - `apps/backend` — local Express API and production static-file server.
 - `packages/contracts` — validated API contracts shared between client and
   server.
-- `packages/core` — framework-independent KSP detection and validation logic.
+- `packages/core` — framework-independent KSP detection, CKAN metadata parsing,
+  and in-memory registry indexing.
 
 ## KSP setup
 
@@ -53,8 +54,18 @@ The active installation is stored atomically in `config.json`:
 - Linux: `$XDG_CONFIG_HOME/kraken-mod-manager` (or `~/.config/kraken-mod-manager`)
 - macOS: `~/Library/Application Support/Kraken Mod Manager`
 
+## CKAN registry
+
+After an installation is configured, refresh the official CKAN-meta archive to
+build a local searchable index. The cache is stored separately from config:
+
+- Windows: `%LOCALAPPDATA%/Kraken Mod Manager/Cache`
+- Linux: `$XDG_CACHE_HOME/kraken-mod-manager` (or `~/.cache/kraken-mod-manager`)
+- macOS: `~/Library/Caches/Kraken Mod Manager`
+
 The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
-`GET`/`PUT /api/v1/config`, and `GET /api/v1/fs/directories`.
+`GET`/`PUT /api/v1/config`, `GET /api/v1/fs/directories`, `GET /api/v1/registry`,
+`POST /api/v1/registry/refresh`, and `GET /api/v1/mods`.
 
 ## Verification
 

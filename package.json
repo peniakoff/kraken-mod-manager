@@ -9,7 +9,7 @@
     "pnpm": ">=11.13.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @kraken/contracts build && pnpm --parallel --filter @kraken/backend --filter @kraken/frontend dev",
+    "dev": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm --parallel --filter @kraken/backend --filter @kraken/frontend dev",
     "build": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm --filter @kraken/frontend build && pnpm --filter @kraken/backend build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm -r typecheck",

@@ -1,7 +1,10 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
+import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
+import { TarGzArchive } from "../src/adapters/tar-gz-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
+import { RegistryService } from "../src/registry-service.js";
 import type { PlatformPort } from "@kraken/core";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -22,6 +25,15 @@ async function createTestApp() {
     platform,
     configStore: new ConfigStore(join(home, "config", "config.json")),
     directoryBrowser: new DirectoryBrowser([home]),
+    registryService: new RegistryService(
+      {
+        async get() {
+          throw new Error("network unused in setup tests");
+        },
+      },
+      new TarGzArchive(),
+      new RegistryCacheStore(join(home, "cache", "registry.json")),
+    ),
   });
   return { app, home, ksp };
 }

@@ -2,6 +2,24 @@
  * Framework-independent domain logic. Adapters provide platform and file-system
  * access so this package stays usable outside the local Express application.
  */
+
+export {
+  buildModulesFromEntries,
+  CkanIndex,
+  compareCkanVersions,
+  isCompatibleWithKsp,
+  parseCkanDocument,
+  parseCkanText,
+  refreshRegistry,
+  type ArchiveEntry,
+  type ArchivePort,
+  type CkanModule,
+  type CkanSearchOptions,
+  type CkanSearchResult,
+  type HttpPort,
+  type RegistrySnapshot,
+} from "./ckan.js";
+
 export type KspPlatform = "win32" | "linux" | "darwin";
 export type InstallationSource = "steam" | "gog" | "epic" | "manual";
 

@@ -29,6 +29,30 @@ export function getConfigFilePath(platform: PlatformPort): string {
   }
 }
 
+export function getRegistryCacheFilePath(platform: PlatformPort): string {
+  switch (platform.platform) {
+    case "win32":
+      return join(
+        platform.environment.LOCALAPPDATA ?? join(platform.homeDirectory, "AppData", "Local"),
+        "Kraken Mod Manager",
+        "Cache",
+        "registry.json",
+      );
+    case "linux":
+      return join(
+        platform.environment.XDG_CACHE_HOME ?? join(platform.homeDirectory, ".cache"),
+        "kraken-mod-manager",
+        "registry.json",
+      );
+    case "darwin":
+      return join(platform.homeDirectory, "Library", "Caches", "Kraken Mod Manager", "registry.json");
+    default: {
+      const exhaustive: never = platform.platform;
+      throw new Error(`Unsupported platform: ${exhaustive}`);
+    }
+  }
+}
+
 export function getBrowseRoots(platform: PlatformPort): string[] {
   if (platform.platform === "win32") {
     return Array.from({ length: 26 }, (_, index) => `${String.fromCharCode(65 + index)}:\\`);

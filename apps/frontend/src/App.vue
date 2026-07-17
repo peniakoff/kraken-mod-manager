@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import type { DirectoryListingResponse, KspInstallation } from "@kraken/contracts";
-import { getConfig, getDirectories, getHealth, getInstallations, saveInstallation } from "./api.js";
+import { onMounted, ref, watch } from "vue";
+import type { CkanModule, DirectoryListingResponse, KspInstallation, RegistryResponse } from "@kraken/contracts";
+import {
+  getConfig,
+  getDirectories,
+  getHealth,
+  getInstallations,
+  getRegistry,
+  refreshRegistry,
+  saveInstallation,
+  searchMods,
+} from "./api.js";
 
 const status = ref<"checking" | "ready" | "unavailable" | "error">("checking");
 const version = ref<string>();
@@ -10,6 +19,13 @@ const candidates = ref<KspInstallation[]>([]);
 const errorMessage = ref<string>();
 const directoryListing = ref<DirectoryListingResponse>();
 const isSaving = ref(false);
+
+const registry = ref<RegistryResponse>();
+const isRefreshingRegistry = ref(false);
+const searchQuery = ref("");
+const searchResults = ref<CkanModule[]>([]);
+const searchTotal = ref(0);
+const isSearching = ref(false);
 
 async function loadSetup(): Promise<void> {
   status.value = "checking";
@@ -22,14 +38,28 @@ async function loadSetup(): Promise<void> {
     if (config.configured) {
       installation.value = config.installation;
       candidates.value = [];
+      await loadRegistryPanel(config.installation);
     } else {
       installation.value = undefined;
       candidates.value = (await getInstallations()).installations;
+      registry.value = undefined;
+      searchResults.value = [];
+      searchTotal.value = 0;
     }
     status.value = "ready";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "The local service is unavailable.";
     status.value = "unavailable";
+  }
+}
+
+async function loadRegistryPanel(active: KspInstallation): Promise<void> {
+  registry.value = await getRegistry();
+  if (registry.value.status === "ready") {
+    await runSearch(active);
+  } else {
+    searchResults.value = [];
+    searchTotal.value = 0;
   }
 }
 
@@ -42,6 +72,7 @@ async function selectInstallation(path: string): Promise<void> {
       installation.value = config.installation;
       candidates.value = [];
       directoryListing.value = undefined;
+      await loadRegistryPanel(config.installation);
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "The installation could not be saved.";
@@ -67,6 +98,59 @@ async function openChild(name: string): Promise<void> {
   }
   await openBrowser(`${directoryListing.value.currentPath}/${name}`);
 }
+
+async function onRefreshRegistry(): Promise<void> {
+  if (installation.value === undefined) {
+    return;
+  }
+  isRefreshingRegistry.value = true;
+  errorMessage.value = undefined;
+  try {
+    registry.value = await refreshRegistry();
+    await runSearch(installation.value);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "The registry could not be refreshed.";
+    status.value = "error";
+  } finally {
+    isRefreshingRegistry.value = false;
+  }
+}
+
+async function runSearch(active?: KspInstallation): Promise<void> {
+  const target = active ?? installation.value;
+  if (target === undefined) {
+    return;
+  }
+  isSearching.value = true;
+  try {
+    const result = await searchMods({
+      q: searchQuery.value.trim() || undefined,
+      compatibleWith: target.version,
+      limit: 50,
+      offset: 0,
+    });
+    searchResults.value = result.mods;
+    searchTotal.value = result.total;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Mod search failed.";
+    status.value = "error";
+  } finally {
+    isSearching.value = false;
+  }
+}
+
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(searchQuery, () => {
+  if (installation.value === undefined || registry.value?.status !== "ready") {
+    return;
+  }
+  if (searchTimer !== undefined) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(() => {
+    void runSearch();
+  }, 250);
+});
 
 onMounted(loadSetup);
 </script>
@@ -99,7 +183,49 @@ onMounted(loadSetup);
         <p class="mt-2 text-sm text-slate-300">KSP version: {{ installation.version ?? "Unknown" }}</p>
       </section>
 
-      <section v-else-if="status === 'ready'" class="mt-8">
+      <section v-if="installation !== undefined && registry !== undefined" class="mt-8 rounded-lg border border-slate-700 p-5">
+        <h2 class="font-semibold">CKAN registry</h2>
+        <p v-if="registry.status === 'missing'" class="mt-2 text-slate-300">
+          No local metadata cache yet. Refresh to download the official CKAN-meta archive.
+        </p>
+        <p v-else class="mt-2 text-slate-300">
+          {{ registry.moduleCount }} modules indexed
+          <span v-if="registry.updatedAt"> · updated {{ registry.updatedAt }}</span>
+          <span v-if="registry.parseErrors"> · {{ registry.parseErrors }} parse errors</span>
+        </p>
+        <button
+          class="mt-4 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+          type="button"
+          :disabled="isRefreshingRegistry"
+          @click="onRefreshRegistry"
+        >
+          {{ isRefreshingRegistry ? "Refreshing…" : "Refresh registry" }}
+        </button>
+
+        <div v-if="registry.status === 'ready'" class="mt-6">
+          <label class="block text-sm font-medium text-slate-300" for="mod-search">Search mods</label>
+          <input
+            id="mod-search"
+            v-model="searchQuery"
+            class="mt-2 w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm"
+            type="search"
+            placeholder="Name, author, or tag"
+          />
+          <p class="mt-2 text-sm text-slate-400">
+            <span v-if="isSearching">Searching…</span>
+            <span v-else>{{ searchTotal }} result{{ searchTotal === 1 ? "" : "s" }}</span>
+          </p>
+          <ul class="mt-3 max-h-80 space-y-3 overflow-y-auto">
+            <li v-for="mod in searchResults" :key="`${mod.identifier}@${mod.version}`" class="rounded-lg border border-slate-700 p-3">
+              <p class="font-semibold">{{ mod.name }} <span class="font-mono text-sm text-slate-400">{{ mod.version }}</span></p>
+              <p class="mt-1 text-sm text-slate-400">{{ mod.identifier }} · {{ mod.authors.join(", ") || "Unknown author" }}</p>
+              <p v-if="mod.abstract" class="mt-2 line-clamp-2 text-sm text-slate-300">{{ mod.abstract }}</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section v-else-if="installation === undefined && status === 'ready'" class="mt-8">
         <h2 class="font-semibold">Detected installations</h2>
         <p v-if="candidates.length === 0" class="mt-2 text-slate-300">No supported installation was found automatically.</p>
         <ul v-else class="mt-3 space-y-3">

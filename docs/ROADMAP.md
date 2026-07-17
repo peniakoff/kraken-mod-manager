@@ -36,10 +36,6 @@
 ## Phase 2: Game Detection & Path Handling (KSP Auto-Discovery)
 *Goal: Automatically locate the game installation or provide a seamless manual selection process.*
 
-The implementation sequence, API boundaries, security controls, acceptance
-criteria, and test matrix for this phase are defined in the
-[next delivery cycle plan](NEXT_CYCLE_PLAN.md).
-
 - [x] **2.1. Drive Scanning Module:**
     *   Create a Node.js module to scan standard Steam, GOG, and Epic Games paths across Windows, Linux, and macOS.
     *   Verify valid KSP instances by checking for `KSP.exe` / `KSP.x86_64` and reading the `readme.txt` / `buildID64.txt` for the game version.
@@ -52,11 +48,11 @@ criteria, and test matrix for this phase are defined in the
 ## Phase 3: Metadata & Mod Repository (CKAN Registry Integration)
 *Goal: Fetch and process available mods and their versions from public CKAN repositories.*
 
-- [ ] **3.1. Fetching Metadata:**
+- [x] **3.1. Fetching Metadata:**
     *   Implement a service to download and update the official `.tar.gz` or `.zip` from the CKAN-meta repository.
-- [ ] **3.2. Metadata Parser (.ckan):**
+- [x] **3.2. Metadata Parser (.ckan):**
     *   Write a TS v7 parser for `.ckan` files utilizing modern language features (strict typing, pattern matching if applicable) for the JSON payload.
-- [ ] **3.3. Indexing & Searching:**
+- [x] **3.3. Indexing & Searching:**
     *   Create a fast local index (in-memory, lightweight SQLite, or JSON cache) to allow instant filtering and searching by name, category, or author.
 
 ## Phase 4: Mod Management Engine (Core Logic)

@@ -4,6 +4,9 @@ import {
   directoryListingResponseSchema,
   healthResponseSchema,
   installationsResponseSchema,
+  modsQuerySchema,
+  modsResponseSchema,
+  registryResponseSchema,
   updateConfigRequestSchema,
 } from "@kraken/contracts";
 import {
@@ -17,14 +20,19 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigStore, ConfigStoreError } from "./adapters/config-store.js";
 import { NodeFileSystem } from "./adapters/node-file-system.js";
+import { NodeHttp } from "./adapters/node-http.js";
+import { RegistryCacheStore, RegistryCacheError } from "./adapters/registry-cache-store.js";
+import { TarGzArchive } from "./adapters/tar-gz-archive.js";
 import { DirectoryBrowser, DirectoryBrowserError } from "./directory-browser.js";
-import { getBrowseRoots, getConfigFilePath, getPlatformPort } from "./platform.js";
+import { getBrowseRoots, getConfigFilePath, getPlatformPort, getRegistryCacheFilePath } from "./platform.js";
+import { RegistryService, RegistryServiceError } from "./registry-service.js";
 
 export interface AppDependencies {
   fileSystem: FileSystemPort;
   platform: PlatformPort;
   configStore: ConfigStore;
   directoryBrowser: DirectoryBrowser;
+  registryService: RegistryService;
   frontendDirectory?: string;
 }
 
@@ -35,6 +43,7 @@ export function createDefaultDependencies(frontendDirectory = process.env.KMM_FR
     platform,
     configStore: new ConfigStore(getConfigFilePath(platform)),
     directoryBrowser: new DirectoryBrowser(getBrowseRoots(platform)),
+    registryService: new RegistryService(new NodeHttp(), new TarGzArchive(), new RegistryCacheStore(getRegistryCacheFilePath(platform))),
   };
   if (frontendDirectory !== undefined) {
     dependencies.frontendDirectory = frontendDirectory;
@@ -134,6 +143,61 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
   });
 
+  app.get("/api/v1/registry", async (_request, response, next) => {
+    try {
+      await dependencies.registryService.ensureLoaded();
+      response.json(registryResponseSchema.parse(dependencies.registryService.getStatus()));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/registry/refresh", async (_request, response, next) => {
+    try {
+      await dependencies.registryService.ensureLoaded();
+      response.json(registryResponseSchema.parse(await dependencies.registryService.refresh()));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/mods", async (request, response, next) => {
+    const parsed = modsQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      sendError(response, 400, "INVALID_REQUEST", "Invalid mods query parameters.");
+      return;
+    }
+
+    try {
+      await dependencies.registryService.ensureLoaded();
+      const searchOptions: {
+        query?: string;
+        tag?: string;
+        compatibleWith?: string;
+        limit: number;
+        offset: number;
+        latestOnly: true;
+      } = {
+        limit: parsed.data.limit,
+        offset: parsed.data.offset,
+        latestOnly: true,
+      };
+      if (parsed.data.q !== undefined) {
+        searchOptions.query = parsed.data.q;
+      }
+      if (parsed.data.tag !== undefined) {
+        searchOptions.tag = parsed.data.tag;
+      }
+      if (parsed.data.compatibleWith !== undefined) {
+        searchOptions.compatibleWith = parsed.data.compatibleWith;
+      }
+      const result = dependencies.registryService.search(searchOptions);
+      response.json(modsResponseSchema.parse(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   const frontendDirectory = dependencies.frontendDirectory;
   if (frontendDirectory !== undefined && existsSync(frontendDirectory)) {
     app.use(express.static(frontendDirectory));
@@ -153,6 +217,14 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof ConfigStoreError) {
       sendError(response, 500, "CONFIGURATION_ERROR", error.message);
+      return;
+    }
+    if (error instanceof RegistryCacheError) {
+      sendError(response, 500, "REGISTRY_CACHE_ERROR", error.message);
+      return;
+    }
+    if (error instanceof RegistryServiceError) {
+      sendError(response, error.code === "REGISTRY_REFRESH_FAILED" ? 503 : 500, error.code, error.message);
       return;
     }
     sendError(response, 500, "INTERNAL_ERROR", "The local service could not complete the request.");
