@@ -28,6 +28,18 @@ function fixtureModZip(): Uint8Array {
   });
 }
 
+function setFirstDeclaredZipSize(archive: Uint8Array, size: number): Uint8Array {
+  const copy = archive.slice();
+  const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
+  for (let offset = 0; offset <= copy.byteLength - 28; offset += 1) {
+    if (view.getUint32(offset, true) === 0x02014b50) {
+      view.setUint32(offset + 24, size, true);
+      return copy;
+    }
+  }
+  throw new Error("ZIP central directory was not found");
+}
+
 function fixtureMetaArchive(sha256: string, sha1: string): Uint8Array {
   const tar = packUstar([
     {
@@ -52,6 +64,20 @@ function fixtureMetaArchive(sha256: string, sha1: string): Uint8Array {
         author: "Tester",
         version: "1.0.0",
         tags: ["plugin"],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/AnotherMod/AnotherMod-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "AnotherMod",
+        name: "Another Mod",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: fixtureModZip().byteLength,
+        download_hash: { sha256, sha1 },
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "AnotherMod" }],
       }),
     },
   ]);
@@ -79,7 +105,7 @@ async function createInstallTestApp() {
   };
 
   const streamingHttp = new StreamingHttp(async (url) => {
-    if (url === "https://example.test/ExampleMod.zip") {
+    if (url === "https://example.test/ExampleMod.zip" || url === "https://example.test/AnotherMod.zip") {
       return new Response(Buffer.from(zipBytes), {
         status: 200,
         headers: { "content-length": String(zipBytes.byteLength) },
@@ -174,6 +200,106 @@ describe("mod install API", () => {
     ]);
   });
 
+  it("rolls back files when an install fails partway through", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    mkdirSync(join(ksp, "GameData", "ExampleMod", "plugin.dll"), { recursive: true });
+
+    const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+
+    expect(finished.status).toBe("failed");
+    expect(() => readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"))).toThrow();
+    expect(() => readFileSync(join(home, "data", "install-manifest.json"))).toThrow();
+  });
+
+  it("removes files dropped by a reinstalled mod", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const first = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await waitForJob(app, first.body.job.jobId);
+
+    const obsoletePath = join(ksp, "GameData", "ExampleMod", "obsolete.txt");
+    writeFileSync(obsoletePath, "obsolete");
+    const manifestPath = join(home, "data", "install-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      mods: Array<{ identifier: string; files: string[] }>;
+    };
+    manifest.mods[0]!.files.push("GameData/ExampleMod/obsolete.txt");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const second = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    const finished = await waitForJob(app, second.body.job.jobId);
+
+    expect(finished.status).toBe("succeeded");
+    expect(() => readFileSync(obsoletePath)).toThrow();
+  });
+
+  it("keeps managed installs scoped to their KSP installation", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await waitForJob(app, accepted.body.job.jobId);
+
+    const secondKsp = join(home, "SecondKSP");
+    mkdirSync(join(secondKsp, "GameData"), { recursive: true });
+    writeFileSync(join(secondKsp, "KSP.x86_64"), "");
+    writeFileSync(join(secondKsp, "readme.txt"), "Version 1.12.5");
+    await request(app).put("/api/v1/config").send({ installationPath: secondKsp });
+
+    const secondInventory = await request(app).get("/api/v1/installed-mods");
+    expect(secondInventory.body.mods).toEqual([]);
+    const wrongUninstall = await request(app).delete("/api/v1/mods/ExampleMod");
+    expect(wrongUninstall.status).toBe(422);
+
+    await request(app).put("/api/v1/config").send({ installationPath: ksp });
+    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
+    expect(removed.status).toBe(204);
+  });
+
+  it("keeps only files that remain after a partial uninstall", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await waitForJob(app, accepted.body.job.jobId);
+
+    const blockedPath = join(ksp, "GameData", "blocked");
+    mkdirSync(blockedPath, { recursive: true });
+    writeFileSync(join(blockedPath, "child.txt"), "keep");
+    const manifestPath = join(home, "data", "install-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      mods: Array<{ identifier: string; files: string[] }>;
+    };
+    manifest.mods[0]!.files.push("GameData/blocked");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
+    expect(removed.status).toBe(500);
+    const updated = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      mods: Array<{ identifier: string; files: string[] }>;
+    };
+    expect(updated.mods[0]!.files).toEqual(["GameData/blocked"]);
+  });
+
+  it("serializes concurrent manifest updates", async () => {
+    const { app } = await createInstallTestApp();
+    const [first, second] = await Promise.all([
+      request(app).post("/api/v1/mods/ExampleMod/install").send({}),
+      request(app).post("/api/v1/mods/AnotherMod/install").send({}),
+    ]);
+
+    const [firstFinished, secondFinished] = await Promise.all([
+      waitForJob(app, first.body.job.jobId),
+      waitForJob(app, second.body.job.jobId),
+    ]);
+    expect(firstFinished.status).toBe("succeeded");
+    expect(secondFinished.status).toBe("succeeded");
+
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ identifier: "ExampleMod", status: "managed" }),
+        expect.objectContaining({ identifier: "AnotherMod", status: "managed" }),
+      ]),
+    );
+  });
+
   it("rejects zip slip and hash mismatches", async () => {
     const zipArchive = new ZipArchive();
     expect(() =>
@@ -183,6 +309,17 @@ describe("mod install API", () => {
         }),
       ),
     ).toThrow(/unsafe/i);
+    expect(() =>
+      zipArchive.extractFiles(
+        setFirstDeclaredZipSize(
+          zipSync({ "GameData/TooLarge/file.bin": new TextEncoder().encode("small") }),
+          50 * 1024 * 1024 + 1,
+        ),
+      ),
+    ).toThrow(/size limit/i);
+    expect(zipArchive.extractFiles(zipSync({ "GameData/Empty/file.txt": new Uint8Array() }))).toEqual([
+      { path: "GameData/Empty/file.txt", data: new Uint8Array() },
+    ]);
 
     const { app } = await createInstallTestApp();
     const badHttp = new StreamingHttp(async () => {
@@ -246,6 +383,8 @@ describe("mod install API", () => {
     const { app } = await createInstallTestApp();
     const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
     const jobId = accepted.body.job.jobId as string;
+    const finished = await waitForJob(app, jobId);
+    expect(finished.status).toBe("succeeded");
 
     const eventsResponse = await request(app).get(`/api/v1/jobs/${jobId}/events`).buffer(true).parse((res, callback) => {
       let data = "";
@@ -260,9 +399,6 @@ describe("mod install API", () => {
 
     expect(eventsResponse.status).toBe(200);
     expect(eventsResponse.headers["content-type"]).toMatch(/text\/event-stream/);
-    expect(String(eventsResponse.body)).toContain("data:");
-
-    const finished = await waitForJob(app, jobId);
-    expect(finished.status).toBe("succeeded");
+    expect(String(eventsResponse.body)).toContain('"status":"succeeded"');
   });
 });

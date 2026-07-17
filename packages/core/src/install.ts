@@ -11,6 +11,7 @@ export interface ManagedModRecord {
   identifier: string;
   name: string;
   version: string;
+  installationPath: string;
   files: string[];
 }
 

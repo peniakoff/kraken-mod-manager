@@ -11,7 +11,7 @@ import {
   type InstalledModSummary,
   type ManagedModRecord,
 } from "@kraken/core";
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
 import { StreamingHttp, StreamingHttpError } from "./adapters/streaming-http.js";
@@ -37,6 +37,8 @@ export class InstallServiceError extends Error {
 }
 
 export class InstallService {
+  private manifestMutation: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly fileSystem: FileSystemPort,
     private readonly registryService: RegistryService,
@@ -49,8 +51,9 @@ export class InstallService {
 
   async listInstalled(kspPath: string): Promise<InstalledModSummary[]> {
     await this.registryService.ensureLoaded();
+    const canonicalRoot = await this.fileSystem.realpath(kspPath);
     const manifest = await this.manifestStore.read();
-    const gameDataPath = join(kspPath, "GameData");
+    const gameDataPath = join(canonicalRoot, "GameData");
     let directories: string[] = [];
     try {
       const entries = await readdir(gameDataPath, { withFileTypes: true });
@@ -67,7 +70,8 @@ export class InstallService {
       knownNames.set(mod.identifier, mod.name);
     }
 
-    return buildInventory(directories, manifest.mods, knownIdentifiers, knownNames);
+    const managed = manifest.mods.filter((mod) => mod.installationPath === canonicalRoot);
+    return buildInventory(directories, managed, knownIdentifiers, knownNames);
   }
 
   startInstall(kspPath: string, identifier: string, version?: string): JobResponse {
@@ -93,29 +97,50 @@ export class InstallService {
   }
 
   async uninstall(kspPath: string, identifier: string): Promise<void> {
-    const manifest = await this.manifestStore.read();
-    const record = manifest.mods.find((mod) => mod.identifier === identifier);
-    if (record === undefined) {
-      throw new InstallServiceError("Only managed mods can be uninstalled.", "NOT_MANAGED");
-    }
-
-    const canonicalRoot = await this.fileSystem.realpath(kspPath);
     try {
-      for (const relativePath of [...record.files].sort((left, right) => right.length - left.length)) {
-        await this.removeInstalledPath(canonicalRoot, relativePath);
-      }
-      await this.pruneEmptyParents(canonicalRoot, record.files);
+      await this.withManifestMutation(async () => {
+        const canonicalRoot = await this.fileSystem.realpath(kspPath);
+        const manifest = await this.manifestStore.read();
+        const record = manifest.mods.find(
+          (mod) => mod.identifier === identifier && mod.installationPath === canonicalRoot,
+        );
+        if (record === undefined) {
+          throw new InstallServiceError("Only managed mods can be uninstalled.", "NOT_MANAGED");
+        }
+
+        const remaining = new Set(record.files);
+        try {
+          for (const relativePath of [...record.files].sort((left, right) => right.length - left.length)) {
+            await this.removeInstalledPath(canonicalRoot, relativePath);
+            remaining.delete(relativePath);
+          }
+          await this.pruneEmptyParents(canonicalRoot, record.files);
+        } catch (error: unknown) {
+          const remainingFiles = record.files.filter((file) => remaining.has(file));
+          await this.manifestStore.write({
+            schemaVersion: 1,
+            mods:
+              remainingFiles.length === 0
+                ? manifest.mods.filter((mod) => mod !== record)
+                : manifest.mods.map((mod) => (mod === record ? { ...record, files: remainingFiles } : mod)),
+          });
+          throw error;
+        }
+
+        await this.manifestStore.write({
+          schemaVersion: 1,
+          mods: manifest.mods.filter((mod) => mod !== record),
+        });
+      });
     } catch (error: unknown) {
+      if (error instanceof InstallServiceError) {
+        throw error;
+      }
       throw new InstallServiceError(
         error instanceof Error ? error.message : "Uninstall failed.",
         "UNINSTALL_FAILED",
       );
     }
-
-    await this.manifestStore.write({
-      schemaVersion: 1,
-      mods: manifest.mods.filter((mod) => mod.identifier !== identifier),
-    });
   }
 
   private async runInstall(jobId: string, kspPath: string, identifier: string, version?: string): Promise<void> {
@@ -163,36 +188,58 @@ export class InstallService {
       const bySource = new Map(zipEntries.map((entry) => [entry.path, entry.data]));
 
       this.jobStore.update(jobId, { phase: "installing", message: "Copying files into GameData." });
-      const canonicalRoot = await this.fileSystem.realpath(kspPath);
-      const installedFiles: string[] = [];
+      await this.withManifestMutation(async () => {
+        const canonicalRoot = await this.fileSystem.realpath(kspPath);
+        const manifest = await this.manifestStore.read();
+        const previous = manifest.mods.find(
+          (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
+        );
+        const previousFiles = await this.readInstalledFiles(canonicalRoot, previous?.files ?? []);
+        const installedFiles: string[] = [];
 
-      for (const mapping of mappings) {
-        if (!isAllowedDestination(mapping.destinationPath)) {
-          throw new InstallPolicyError(
-            `Destination escapes allowed roots: ${mapping.destinationPath}`,
-            "INVALID_DESTINATION",
+        try {
+          for (const mapping of mappings) {
+            if (!isAllowedDestination(mapping.destinationPath)) {
+              throw new InstallPolicyError(
+                `Destination escapes allowed roots: ${mapping.destinationPath}`,
+                "INVALID_DESTINATION",
+              );
+            }
+            const data = bySource.get(mapping.sourcePath);
+            if (data === undefined) {
+              throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
+            }
+            const relativeDestination = normalizeSlashPath(mapping.destinationPath);
+            const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
+            installedFiles.push(relativeDestination);
+            await mkdir(dirname(absoluteDestination), { recursive: true });
+            await writeFile(absoluteDestination, data);
+          }
+
+          const installedSet = new Set(installedFiles);
+          const staleFiles = previous?.files.filter((file) => !installedSet.has(file)) ?? [];
+          for (const staleFile of [...staleFiles].sort((left, right) => right.length - left.length)) {
+            await this.removeInstalledPath(canonicalRoot, staleFile);
+          }
+          await this.pruneEmptyParents(canonicalRoot, staleFiles);
+
+          const record: ManagedModRecord = {
+            identifier: module.identifier,
+            name: module.name,
+            version: module.version,
+            installationPath: canonicalRoot,
+            files: installedFiles,
+          };
+          const nextMods = manifest.mods.filter(
+            (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
           );
+          nextMods.push(record);
+          await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
+        } catch (error: unknown) {
+          await this.rollbackInstall(canonicalRoot, installedFiles, previousFiles);
+          throw error;
         }
-        const data = bySource.get(mapping.sourcePath);
-        if (data === undefined) {
-          throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
-        }
-        const absoluteDestination = await this.resolveDestination(canonicalRoot, mapping.destinationPath);
-        await mkdir(dirname(absoluteDestination), { recursive: true });
-        await writeFile(absoluteDestination, data);
-        installedFiles.push(normalizeSlashPath(mapping.destinationPath));
-      }
-
-      const record: ManagedModRecord = {
-        identifier: module.identifier,
-        name: module.name,
-        version: module.version,
-        files: installedFiles,
-      };
-      const manifest = await this.manifestStore.read();
-      const nextMods = manifest.mods.filter((mod) => mod.identifier !== module.identifier);
-      nextMods.push(record);
-      await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
+      });
 
       this.jobStore.update(jobId, {
         status: "succeeded",
@@ -248,6 +295,58 @@ export class InstallService {
     await rm(absolute, { force: true });
   }
 
+  private async readInstalledFiles(kspRoot: string, files: readonly string[]): Promise<Map<string, Uint8Array>> {
+    const contents = new Map<string, Uint8Array>();
+    for (const relativePath of files) {
+      const absolute = await this.resolveDestination(kspRoot, relativePath);
+      try {
+        contents.set(relativePath, await readFile(absolute));
+      } catch (error: unknown) {
+        if (!isMissingFile(error)) {
+          throw error;
+        }
+      }
+    }
+    return contents;
+  }
+
+  private async rollbackInstall(
+    kspRoot: string,
+    installedFiles: readonly string[],
+    previousFiles: ReadonlyMap<string, Uint8Array>,
+  ): Promise<void> {
+    let rollbackError: unknown;
+    for (const relativePath of [...new Set(installedFiles)].sort((left, right) => right.length - left.length)) {
+      try {
+        await this.removeInstalledPath(kspRoot, relativePath);
+      } catch (error: unknown) {
+        rollbackError ??= error;
+      }
+    }
+    for (const [relativePath, data] of previousFiles) {
+      try {
+        const absolute = await this.resolveDestination(kspRoot, relativePath);
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, data);
+      } catch (error: unknown) {
+        rollbackError ??= error;
+      }
+    }
+    await this.pruneEmptyParents(kspRoot, installedFiles);
+    if (rollbackError !== undefined) {
+      throw rollbackError;
+    }
+  }
+
+  private withManifestMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.manifestMutation.then(operation);
+    this.manifestMutation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   private async pruneEmptyParents(kspRoot: string, files: readonly string[]): Promise<void> {
     const directories = new Set<string>();
     for (const file of files) {
@@ -282,6 +381,10 @@ export class InstallService {
 function containsPath(root: string, candidate: string): boolean {
   const pathRelative = relative(root, candidate);
   return pathRelative === "" || (!pathRelative.startsWith("..") && !isAbsolute(pathRelative));
+}
+
+function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 // Re-export for error mapping convenience

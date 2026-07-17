@@ -86,6 +86,8 @@ function isManagedModRecord(value: unknown): value is ManagedModRecord {
     record.name.length > 0 &&
     typeof record.version === "string" &&
     record.version.length > 0 &&
+    typeof record.installationPath === "string" &&
+    record.installationPath.length > 0 &&
     Array.isArray(record.files) &&
     record.files.every((file) => typeof file === "string" && file.length > 0)
   );

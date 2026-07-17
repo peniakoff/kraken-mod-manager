@@ -134,6 +134,11 @@ test("indexes latest version per identifier and supports search filters", () => 
 
   const compatible = index.search({ compatibleWith: "1.12.5", limit: 10, offset: 0 });
   assert.equal(compatible.total, 2);
+
+  assert.deepEqual(
+    index.findByIdentifier("MechJeb2").map((module) => module.version),
+    ["2.14.0", "2.15.0"],
+  );
 });
 
 test("compares CKAN versions with epochs", () => {

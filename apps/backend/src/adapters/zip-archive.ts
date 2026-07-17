@@ -23,11 +23,29 @@ export class ZipArchiveError extends Error {
 export class ZipArchive {
   extractFiles(archive: Uint8Array): ZipFileEntry[] {
     let raw: Record<string, Uint8Array>;
+    let declaredEntries = 0;
+    let declaredBytes = 0;
     try {
       raw = unzipSync(archive, {
-        filter: (file) => !file.originalSize || file.originalSize <= MAX_ZIP_ENTRY_BYTES,
+        filter: (file) => {
+          if (!Number.isSafeInteger(file.originalSize) || file.originalSize < 0) {
+            throw new ZipArchiveError(`ZIP entry has an invalid size: ${file.name}`, "ZIP_TOO_LARGE");
+          }
+          if (file.originalSize > MAX_ZIP_ENTRY_BYTES) {
+            throw new ZipArchiveError(`ZIP entry exceeds size limit: ${file.name}`, "ZIP_TOO_LARGE");
+          }
+          declaredEntries += 1;
+          declaredBytes += file.originalSize;
+          if (declaredEntries > MAX_ZIP_ENTRIES || declaredBytes > MAX_ZIP_TOTAL_BYTES) {
+            throw new ZipArchiveError("ZIP archive exceeds extraction limits.", "ZIP_TOO_LARGE");
+          }
+          return true;
+        },
       });
     } catch (error: unknown) {
+      if (error instanceof ZipArchiveError) {
+        throw error;
+      }
       throw new ZipArchiveError(
         `Could not read ZIP archive: ${error instanceof Error ? error.message : String(error)}`,
         "INVALID_ZIP",

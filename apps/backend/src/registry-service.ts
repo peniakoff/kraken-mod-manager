@@ -68,9 +68,7 @@ export class RegistryService {
   }
 
   findModule(identifier: string, version?: string): CkanModule | undefined {
-    const matches = this.index.search({ latestOnly: false, limit: 200_000, offset: 0 }).mods.filter(
-      (module) => module.identifier === identifier,
-    );
+    const matches = this.index.findByIdentifier(identifier);
     if (matches.length === 0) {
       return undefined;
     }

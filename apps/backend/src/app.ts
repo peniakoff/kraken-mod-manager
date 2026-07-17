@@ -315,21 +315,6 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         response.write(`data: ${JSON.stringify(jobProgressEventSchema.parse(event))}\n\n`);
       };
 
-      writeEvent({
-        jobId: job.jobId,
-        phase: job.phase,
-        status: job.status,
-        ...(job.message !== undefined ? { message: job.message } : {}),
-        ...(job.bytesReceived !== undefined ? { bytesReceived: job.bytesReceived } : {}),
-        ...(job.bytesTotal !== undefined ? { bytesTotal: job.bytesTotal } : {}),
-        ...(job.error !== undefined ? { error: job.error } : {}),
-      });
-
-      if (job.status === "succeeded" || job.status === "failed") {
-        response.end();
-        return;
-      }
-
       const unsubscribe = dependencies.installService.subscribe(job.jobId, (event) => {
         writeEvent(event);
         if (event.status === "succeeded" || event.status === "failed") {
@@ -337,6 +322,22 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
           response.end();
         }
       });
+
+      const latest = dependencies.installService.getJob(job.jobId);
+      writeEvent({
+        jobId: latest.jobId,
+        phase: latest.phase,
+        status: latest.status,
+        ...(latest.message !== undefined ? { message: latest.message } : {}),
+        ...(latest.bytesReceived !== undefined ? { bytesReceived: latest.bytesReceived } : {}),
+        ...(latest.bytesTotal !== undefined ? { bytesTotal: latest.bytesTotal } : {}),
+        ...(latest.error !== undefined ? { error: latest.error } : {}),
+      });
+      if (latest.status === "succeeded" || latest.status === "failed") {
+        unsubscribe();
+        response.end();
+        return;
+      }
 
       request.on("close", () => {
         unsubscribe();

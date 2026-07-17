@@ -187,6 +187,10 @@ export class CkanIndex {
     return this.modules.length;
   }
 
+  findByIdentifier(identifier: string): CkanModule[] {
+    return this.modules.filter((module) => module.identifier === identifier);
+  }
+
   search(options: CkanSearchOptions = {}): CkanSearchResult {
     const latestOnly = options.latestOnly !== false;
     let candidates = latestOnly ? selectLatestPerIdentifier(this.modules) : [...this.modules];
