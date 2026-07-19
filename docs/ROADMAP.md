@@ -82,6 +82,7 @@
 
 - [ ] **6.1. Dashboard View:**
     *   Display active KSP installation details, total installed mods, and available updates.
+    *   Keep the project brand mark from `apps/frontend/public/` / `assets/` in the app chrome.
 - [ ] **6.2. Mod Browser View:**
     *   Data table / grid displaying mods with search bars, category filters (Gameplay, Parts, Graphics), and game version compatibility flags.
 - [ ] **6.3. Mod Details Panel:**
@@ -94,6 +95,7 @@
 
 - [ ] **7.1. Build Pipeline Setup:**
     *   Automate the build process via `pnpm` scripts: Compile Vue.js frontend -> move to backend static folder -> compile TypeScript backend.
+    *   Note: local `pnpm build` already compiles the frontend, copies it into the backend, and bundles the server to CJS; SEA packaging remains the open work.
 - [ ] **7.2. Standalone Executable Generation (Node 24 SEA):**
     *   Utilize Node.js v24 native SEA (Single Executable Application) capabilities to output native binaries:
         *   Windows (`kraken-mod-manager-win-x64.exe`)

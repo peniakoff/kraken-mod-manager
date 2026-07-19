@@ -303,6 +303,13 @@ onUnmounted(() => {
 <template>
   <main class="min-h-screen bg-slate-950 p-8 text-slate-100">
     <section class="mx-auto max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-8 shadow-xl">
+      <img
+        src="/icon-192.png"
+        alt=""
+        width="64"
+        height="64"
+        class="mb-4 h-16 w-16 rounded-lg"
+      />
       <p class="text-sm font-semibold uppercase tracking-widest text-cyan-400">Kraken Mod Manager</p>
       <h1 class="mt-3 text-3xl font-bold">Choose your Kerbal Space Program installation.</h1>
       <p class="mt-4 text-slate-300">

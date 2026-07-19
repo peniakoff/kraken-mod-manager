@@ -1,8 +1,13 @@
 # Kraken Mod Manager (KMM)
 
+![Kraken Mod Manager](assets/logo.png)
+
 Kraken Mod Manager (KMM) is a modern, lightweight, cross-platform mod manager
 for Kerbal Space Program (KSP). It takes architectural inspiration from CKAN,
 but is built with TypeScript, Node.js, and Vue.
+
+Tame the modding kraken: discover mods from the official CKAN registry, plan
+dependencies, and install or uninstall with a local-first workflow.
 
 ## Prerequisites
 
@@ -85,6 +90,20 @@ The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
 `POST /api/v1/mods/:identifier/plan`, `POST /api/v1/mods/:identifier/install`,
 `DELETE /api/v1/mods/:identifier`, `GET /api/v1/jobs/:jobId`, and
 `GET /api/v1/jobs/:jobId/events`.
+
+## Branding
+
+Project artwork lives in [`assets/`](assets/):
+
+| File | Use |
+| --- | --- |
+| `logo.png` | Square mark (512×512) for README and general branding |
+| `logo-256.png` | Smaller square mark |
+| `logo-banner.png` | Wide banner (1024×558) |
+
+Web favicons and PWA-sized icons are under
+`apps/frontend/public/` (`favicon.ico`, `apple-touch-icon.png`, `icon-192.png`,
+`icon-512.png`).
 
 ## Verification
 
