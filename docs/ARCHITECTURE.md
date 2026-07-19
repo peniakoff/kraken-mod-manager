@@ -9,9 +9,9 @@ process. Domain code must not be coupled to Vue or Express.
 ## Packages
 
 `@kraken/contracts` owns request and response schemas and their inferred
-TypeScript types. `@kraken/core` will contain KSP detection, CKAN metadata,
-dependency resolution, and installation policy. Platform file-system access,
-networking, and HTTP are adapters around that core.
+TypeScript types. `@kraken/core` contains KSP detection, CKAN metadata parsing
+and indexing, dependency install planning, and installation policy. Platform
+file-system access, networking, and HTTP are adapters around that core.
 
 ## TypeScript 7 compatibility
 
@@ -23,21 +23,22 @@ single-file components. Restore full SFC type-checking when an upstream
 
 ## Security baseline
 
-The local API is intentionally loopback-only. Future state-changing endpoints
-must validate their input, constrain file-system access to an explicitly
-selected KSP installation, and protect against browser-origin requests. Archive
-installation must validate hashes and reject path traversal (Zip Slip).
+The local API is intentionally loopback-only. State-changing endpoints validate
+their input, constrain file-system access to an explicitly selected KSP
+installation, and protect against browser-origin requests. Archive installation
+validates hashes when present and rejects path traversal (Zip Slip).
 
 ## Packaging direction
 
-Node SEA is an eventual delivery target, not a runtime requirement of the
-development skeleton. SEA currently embeds one CommonJS entry script, so the
-backend must be bundled and frontend assets accessed through an asset-provider
-abstraction. Native dependencies should be avoided until per-platform SEA
-builds and signing are in place.
+Node SEA is an eventual delivery target, not a runtime requirement of local
+development. SEA currently embeds one CommonJS entry script, so the backend must
+be bundled and frontend assets accessed through an asset-provider abstraction.
+Native dependencies should be avoided until per-platform SEA builds and signing
+are in place.
 
 ## Progress events
 
-Download and extraction progress will use Server-Sent Events unless the
-application later requires bidirectional realtime messages. SSE matches the
-primarily server-to-client queue updates while reducing protocol complexity.
+Download and extraction progress use Server-Sent Events on
+`GET /api/v1/jobs/:jobId/events`. SSE matches the primarily server-to-client
+queue updates while reducing protocol complexity; WebSockets remain an option
+only if bidirectional realtime messaging becomes necessary.
