@@ -16,6 +16,8 @@ export {
   type CkanDownloadHash,
   type CkanInstallStanza,
   type CkanModule,
+  type CkanRelationship,
+  type CkanRelationships,
   type CkanSearchOptions,
   type CkanSearchResult,
   type HttpPort,
@@ -35,6 +37,18 @@ export {
   type InstalledModSummary,
   type ManagedModRecord,
 } from "./install.js";
+
+export {
+  resolveInstallPlan,
+  type InstallPlan,
+  type InstallPlanConflict,
+  type InstallPlanModuleRef,
+  type InstallPlanOptional,
+  type InstallPlanSatisfied,
+  type InstallPlanStatus,
+  type InstallPlanUnmet,
+  type ResolveInstallPlanOptions,
+} from "./resolve.js";
 
 export type KspPlatform = "win32" | "linux" | "darwin";
 export type InstallationSource = "steam" | "gog" | "epic" | "manual";

@@ -80,6 +80,10 @@ export class RegistryService {
     );
   }
 
+  listModules(): readonly CkanModule[] {
+    return this.index.allModules();
+  }
+
   async refresh(): Promise<RegistryStatus> {
     try {
       const snapshot = await refreshRegistry(this.http, this.archive, this.sourceUrl);

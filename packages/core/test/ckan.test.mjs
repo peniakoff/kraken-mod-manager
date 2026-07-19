@@ -36,6 +36,38 @@ test("parses a valid .ckan document and normalizes authors", () => {
     tags: ["plugin"],
     download: "https://example.test/mm.zip",
     downloadSize: 42,
+    relationships: {
+      depends: [{ name: "Something" }],
+      conflicts: [],
+      recommends: [],
+      suggests: [],
+    },
+  });
+});
+
+test("parses depends, conflicts, recommends, and suggests with version bounds", () => {
+  const module = parseCkanDocument({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    author: "Author",
+    version: "2.0.0",
+    depends: [
+      { name: "ModuleManager", min_version: "4.0.0", max_version: "4.2.3" },
+      "LegacyDep",
+    ],
+    conflicts: [{ name: "OldFancyMod" }],
+    recommends: [{ name: "ToolbarController", min_version: "1.0" }],
+    suggests: [{ name: "ClickThroughBlocker" }],
+  });
+
+  assert.deepEqual(module?.relationships, {
+    depends: [
+      { name: "ModuleManager", minVersion: "4.0.0", maxVersion: "4.2.3" },
+      { name: "LegacyDep" },
+    ],
+    conflicts: [{ name: "OldFancyMod" }],
+    recommends: [{ name: "ToolbarController", minVersion: "1.0" }],
+    suggests: [{ name: "ClickThroughBlocker" }],
   });
 });
 

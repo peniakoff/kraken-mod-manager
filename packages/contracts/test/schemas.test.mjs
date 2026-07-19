@@ -5,6 +5,7 @@ import {
   configResponseSchema,
   directoryListingResponseSchema,
   installModRequestSchema,
+  installPlanResponseSchema,
   installedModsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
@@ -76,7 +77,23 @@ test("accepts installed mods and job responses", () => {
     "managed",
   );
   assert.equal(installModRequestSchema.parse({}).version, undefined);
-  assert.equal(installModRequestSchema.parse({ version: "1.0.0" }).version, "1.0.0");
+  assert.equal(installModRequestSchema.parse({}).installDependencies, false);
+  assert.equal(installModRequestSchema.parse({ version: "1.0.0", installDependencies: true }).installDependencies, true);
+  assert.equal(
+    installPlanResponseSchema.parse({
+      status: "ok",
+      target: { identifier: "FancyMod", name: "Fancy Mod", version: "1.0.0" },
+      toInstall: [
+        { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" },
+        { identifier: "FancyMod", name: "Fancy Mod", version: "1.0.0" },
+      ],
+      alreadySatisfied: [],
+      conflicts: [],
+      unmet: [],
+      optional: [{ kind: "recommends", name: "Toolbar", requiredBy: "FancyMod" }],
+    }).status,
+    "ok",
+  );
   assert.equal(
     jobResponseSchema.parse({
       jobId: "job-1",

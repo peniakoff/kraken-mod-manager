@@ -88,6 +88,23 @@ export const ckanDownloadHashSchema = z.object({
 
 export type CkanDownloadHash = z.infer<typeof ckanDownloadHashSchema>;
 
+export const ckanRelationshipSchema = z.object({
+  name: z.string().min(1),
+  minVersion: z.string().min(1).optional(),
+  maxVersion: z.string().min(1).optional(),
+});
+
+export type CkanRelationship = z.infer<typeof ckanRelationshipSchema>;
+
+export const ckanRelationshipsSchema = z.object({
+  depends: z.array(ckanRelationshipSchema),
+  conflicts: z.array(ckanRelationshipSchema),
+  recommends: z.array(ckanRelationshipSchema),
+  suggests: z.array(ckanRelationshipSchema),
+});
+
+export type CkanRelationships = z.infer<typeof ckanRelationshipsSchema>;
+
 export const ckanModuleSchema = z.object({
   identifier: z.string().min(1),
   name: z.string().min(1),
@@ -102,6 +119,7 @@ export const ckanModuleSchema = z.object({
   downloadSize: z.number().int().nonnegative().optional(),
   downloadHash: ckanDownloadHashSchema.optional(),
   install: z.array(ckanInstallStanzaSchema).optional(),
+  relationships: ckanRelationshipsSchema.optional(),
 });
 
 export type CkanModule = z.infer<typeof ckanModuleSchema>;
@@ -143,9 +161,65 @@ export type InstalledModsResponse = z.infer<typeof installedModsResponseSchema>;
 
 export const installModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
+  installDependencies: z.boolean().optional().default(false),
 });
 
 export type InstallModRequest = z.infer<typeof installModRequestSchema>;
+
+export const planModRequestSchema = z.object({
+  version: z.string().min(1).max(128).optional(),
+});
+
+export type PlanModRequest = z.infer<typeof planModRequestSchema>;
+
+export const installPlanStatusSchema = z.enum(["ok", "blocked"]);
+
+export const installPlanModuleRefSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string().min(1),
+});
+
+export const installPlanSatisfiedSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1).optional(),
+  version: z.string().min(1).optional(),
+  reason: z.enum(["managed", "detected", "planned"]),
+});
+
+export const installPlanConflictSchema = z.object({
+  identifier: z.string().min(1),
+  conflictingWith: z.string().min(1),
+  message: z.string().min(1),
+});
+
+export const installPlanUnmetSchema = z.object({
+  name: z.string().min(1),
+  minVersion: z.string().min(1).optional(),
+  maxVersion: z.string().min(1).optional(),
+  requiredBy: z.string().min(1),
+  message: z.string().min(1),
+});
+
+export const installPlanOptionalSchema = z.object({
+  kind: z.enum(["recommends", "suggests"]),
+  name: z.string().min(1),
+  minVersion: z.string().min(1).optional(),
+  maxVersion: z.string().min(1).optional(),
+  requiredBy: z.string().min(1),
+});
+
+export const installPlanResponseSchema = z.object({
+  status: installPlanStatusSchema,
+  target: installPlanModuleRefSchema,
+  toInstall: z.array(installPlanModuleRefSchema),
+  alreadySatisfied: z.array(installPlanSatisfiedSchema),
+  conflicts: z.array(installPlanConflictSchema),
+  unmet: z.array(installPlanUnmetSchema),
+  optional: z.array(installPlanOptionalSchema),
+});
+
+export type InstallPlanResponse = z.infer<typeof installPlanResponseSchema>;
 
 export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
 

@@ -15,6 +15,19 @@ export interface CkanDownloadHash {
   sha256?: string;
 }
 
+export interface CkanRelationship {
+  name: string;
+  minVersion?: string;
+  maxVersion?: string;
+}
+
+export interface CkanRelationships {
+  depends: CkanRelationship[];
+  conflicts: CkanRelationship[];
+  recommends: CkanRelationship[];
+  suggests: CkanRelationship[];
+}
+
 export interface CkanModule {
   identifier: string;
   name: string;
@@ -29,6 +42,7 @@ export interface CkanModule {
   downloadSize?: number;
   downloadHash?: CkanDownloadHash;
   install?: CkanInstallStanza[];
+  relationships?: CkanRelationships;
 }
 
 export interface HttpPort {
@@ -126,6 +140,11 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     module.install = install;
   }
 
+  const relationships = parseRelationships(document);
+  if (relationships !== undefined) {
+    module.relationships = relationships;
+  }
+
   return module;
 }
 
@@ -185,6 +204,10 @@ export class CkanIndex {
 
   get size(): number {
     return this.modules.length;
+  }
+
+  allModules(): readonly CkanModule[] {
+    return this.modules;
   }
 
   findByIdentifier(identifier: string): CkanModule[] {
@@ -404,6 +427,57 @@ function parseInstallStanzas(value: unknown): CkanInstallStanza[] | undefined {
     }
   }
   return stanzas.length > 0 ? stanzas : undefined;
+}
+
+function parseRelationships(document: Record<string, unknown>): CkanRelationships | undefined {
+  const hasDepends = Object.hasOwn(document, "depends");
+  const hasConflicts = Object.hasOwn(document, "conflicts");
+  const hasRecommends = Object.hasOwn(document, "recommends");
+  const hasSuggests = Object.hasOwn(document, "suggests");
+  if (!hasDepends && !hasConflicts && !hasRecommends && !hasSuggests) {
+    return undefined;
+  }
+  return {
+    depends: parseRelationshipList(document.depends),
+    conflicts: parseRelationshipList(document.conflicts),
+    recommends: parseRelationshipList(document.recommends),
+    suggests: parseRelationshipList(document.suggests),
+  };
+}
+
+function parseRelationshipList(value: unknown): CkanRelationship[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const relationships: CkanRelationship[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const name = asNonEmptyString(entry);
+      if (name !== undefined) {
+        relationships.push({ name });
+      }
+      continue;
+    }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const raw = entry as Record<string, unknown>;
+    const name = asNonEmptyString(raw.name);
+    if (name === undefined) {
+      continue;
+    }
+    const relationship: CkanRelationship = { name };
+    const minVersion = asNonEmptyString(raw.min_version);
+    if (minVersion !== undefined) {
+      relationship.minVersion = minVersion;
+    }
+    const maxVersion = asNonEmptyString(raw.max_version);
+    if (maxVersion !== undefined) {
+      relationship.maxVersion = maxVersion;
+    }
+    relationships.push(relationship);
+  }
+  return relationships;
 }
 
 function normalizeArchivePath(path: string): string {
