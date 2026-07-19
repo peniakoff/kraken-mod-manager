@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type {
   CkanModule,
   DirectoryListingResponse,
+  InstallPlanResponse,
   InstalledMod,
   JobProgressEvent,
   KspInstallation,
@@ -16,6 +17,7 @@ import {
   getInstalledMods,
   getRegistry,
   installMod,
+  planModInstall,
   refreshRegistry,
   saveInstallation,
   searchMods,
@@ -42,6 +44,14 @@ const installedMods = ref<InstalledMod[]>([]);
 const installingIdentifier = ref<string>();
 const uninstallingIdentifier = ref<string>();
 const jobProgress = ref<JobProgressEvent>();
+const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse }>();
+const missingDependencies = computed(() => {
+  const prompt = dependencyPrompt.value;
+  if (prompt === undefined) {
+    return [];
+  }
+  return prompt.plan.toInstall.filter((entry) => entry.identifier !== prompt.mod.identifier);
+});
 let stopWatchingJob: (() => void) | undefined;
 
 async function loadSetup(): Promise<void> {
@@ -170,9 +180,57 @@ async function onInstall(mod: CkanModule): Promise<void> {
   installingIdentifier.value = mod.identifier;
   errorMessage.value = undefined;
   jobProgress.value = undefined;
+  dependencyPrompt.value = undefined;
   stopWatchingJob?.();
   try {
-    const accepted = await installMod(mod.identifier, mod.version);
+    const plan = await planModInstall(mod.identifier, mod.version);
+    if (plan.status === "blocked") {
+      const details = [
+        ...plan.conflicts.map((entry) => entry.message),
+        ...plan.unmet.map((entry) => entry.message),
+      ].join(" ");
+      errorMessage.value = details.length > 0 ? details : "Install plan is blocked by dependencies or conflicts.";
+      status.value = "error";
+      installingIdentifier.value = undefined;
+      return;
+    }
+
+    const missingDependencies = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
+    if (missingDependencies.length > 0) {
+      installingIdentifier.value = undefined;
+      dependencyPrompt.value = { mod, plan };
+      return;
+    }
+
+    await startInstallJob(mod, false);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Install could not be planned.";
+    status.value = "error";
+    installingIdentifier.value = undefined;
+  }
+}
+
+async function confirmDependencyInstall(): Promise<void> {
+  const prompt = dependencyPrompt.value;
+  if (prompt === undefined) {
+    return;
+  }
+  dependencyPrompt.value = undefined;
+  await startInstallJob(prompt.mod, true);
+}
+
+function cancelDependencyInstall(): void {
+  dependencyPrompt.value = undefined;
+  installingIdentifier.value = undefined;
+}
+
+async function startInstallJob(mod: CkanModule, installDependencies: boolean): Promise<void> {
+  installingIdentifier.value = mod.identifier;
+  errorMessage.value = undefined;
+  jobProgress.value = undefined;
+  stopWatchingJob?.();
+  try {
+    const accepted = await installMod(mod.identifier, mod.version, installDependencies);
     stopWatchingJob = watchJobProgress(accepted.job.jobId, (event) => {
       jobProgress.value = event;
       if (event.status === "succeeded") {
@@ -382,5 +440,44 @@ onUnmounted(() => {
         Check again
       </button>
     </section>
+
+    <div
+      v-if="dependencyPrompt !== undefined"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dependency-prompt-title"
+    >
+      <div class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+        <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install required dependencies?</h2>
+        <p class="mt-3 text-slate-300">
+          {{ dependencyPrompt.mod.name }} requires
+          {{ missingDependencies.map((entry) => entry.name).join(", ") }}.
+          Install them automatically?
+        </p>
+        <ul class="mt-4 space-y-2 text-sm text-slate-400">
+          <li v-for="entry in missingDependencies" :key="entry.identifier">
+            {{ entry.name }}
+            <span class="font-mono">{{ entry.version }}</span>
+          </li>
+        </ul>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <button
+            class="rounded-md bg-cyan-500 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
+            type="button"
+            @click="confirmDependencyInstall"
+          >
+            Install automatically
+          </button>
+          <button
+            class="rounded-md border border-slate-600 px-4 py-2 font-semibold text-slate-200 hover:bg-slate-800"
+            type="button"
+            @click="cancelDependencyInstall"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   </main>
 </template>

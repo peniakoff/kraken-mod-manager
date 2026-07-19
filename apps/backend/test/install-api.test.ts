@@ -21,10 +21,10 @@ import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import { gzipSync } from "node:zlib";
 
-function fixtureModZip(): Uint8Array {
+function fixtureModZip(folder = "ExampleMod"): Uint8Array {
   return zipSync({
-    "GameData/ExampleMod/readme.txt": new TextEncoder().encode("hello from example mod\n"),
-    "GameData/ExampleMod/plugin.dll": new TextEncoder().encode("fake-dll"),
+    [`GameData/${folder}/readme.txt`]: new TextEncoder().encode(`hello from ${folder}\n`),
+    [`GameData/${folder}/plugin.dll`]: new TextEncoder().encode("fake-dll"),
   });
 }
 
@@ -40,7 +40,12 @@ function setFirstDeclaredZipSize(archive: Uint8Array, size: number): Uint8Array 
   throw new Error("ZIP central directory was not found");
 }
 
-function fixtureMetaArchive(sha256: string, sha1: string): Uint8Array {
+function fixtureMetaArchive(
+  exampleHash: { sha256: string; sha1: string },
+  moduleManagerHash: { sha256: string; sha1: string },
+): Uint8Array {
+  const exampleZipSize = fixtureModZip("ExampleMod").byteLength;
+  const mmZipSize = fixtureModZip("ModuleManager").byteLength;
   const tar = packUstar([
     {
       path: "CKAN-meta-master/ExampleMod/ExampleMod-1.0.0.ckan",
@@ -51,9 +56,57 @@ function fixtureMetaArchive(sha256: string, sha1: string): Uint8Array {
         version: "1.0.0",
         tags: ["plugin"],
         download: "https://example.test/ExampleMod.zip",
-        download_size: fixtureModZip().byteLength,
-        download_hash: { sha256, sha1 },
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
         install: [{ file: "GameData/ExampleMod", install_to: "GameData" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/ModuleManager/ModuleManager-4.2.3.ckan",
+      content: JSON.stringify({
+        identifier: "ModuleManager",
+        name: "Module Manager",
+        author: "Tester",
+        version: "4.2.3",
+        tags: ["plugin"],
+        download: "https://example.test/ModuleManager.zip",
+        download_size: mmZipSize,
+        download_hash: moduleManagerHash,
+        install: [{ file: "GameData/ModuleManager", install_to: "GameData" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/DependentMod/DependentMod-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "DependentMod",
+        name: "Dependent Mod",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/DependentMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        depends: [{ name: "ModuleManager", min_version: "4.0.0" }],
+        conflicts: [{ name: "DetectedOnly" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "DependentMod" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/BrokenDependent/BrokenDependent-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "BrokenDependent",
+        name: "Broken Dependent",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/BrokenDependent.zip",
+        download_size: exampleZipSize,
+        download_hash: {
+          sha256: "0".repeat(64),
+          sha1: "0".repeat(40),
+        },
+        depends: [{ name: "ModuleManager", min_version: "4.0.0" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "BrokenDependent" }],
       }),
     },
     {
@@ -75,8 +128,8 @@ function fixtureMetaArchive(sha256: string, sha1: string): Uint8Array {
         version: "1.0.0",
         tags: ["plugin"],
         download: "https://example.test/AnotherMod.zip",
-        download_size: fixtureModZip().byteLength,
-        download_hash: { sha256, sha1 },
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "AnotherMod" }],
       }),
     },
@@ -91,24 +144,42 @@ async function createInstallTestApp() {
   writeFileSync(join(ksp, "KSP.x86_64"), "");
   writeFileSync(join(ksp, "readme.txt"), "Version 1.12.5");
 
-  const zipBytes = fixtureModZip();
-  const sha256 = createHash("sha256").update(zipBytes).digest("hex");
-  const sha1 = createHash("sha1").update(zipBytes).digest("hex");
+  const zipBytes = fixtureModZip("ExampleMod");
+  const mmZipBytes = fixtureModZip("ModuleManager");
+  const exampleHash = {
+    sha256: createHash("sha256").update(zipBytes).digest("hex"),
+    sha1: createHash("sha1").update(zipBytes).digest("hex"),
+  };
+  const moduleManagerHash = {
+    sha256: createHash("sha256").update(mmZipBytes).digest("hex"),
+    sha1: createHash("sha1").update(mmZipBytes).digest("hex"),
+  };
 
   const http: HttpPort = {
     async get(url: string) {
       if (url.includes("CKAN-meta")) {
-        return fixtureMetaArchive(sha256, sha1);
+        return fixtureMetaArchive(exampleHash, moduleManagerHash);
       }
       throw new Error(`unexpected metadata url: ${url}`);
     },
   };
 
   const streamingHttp = new StreamingHttp(async (url) => {
-    if (url === "https://example.test/ExampleMod.zip" || url === "https://example.test/AnotherMod.zip") {
+    if (
+      url === "https://example.test/ExampleMod.zip" ||
+      url === "https://example.test/AnotherMod.zip" ||
+      url === "https://example.test/DependentMod.zip" ||
+      url === "https://example.test/BrokenDependent.zip"
+    ) {
       return new Response(Buffer.from(zipBytes), {
         status: 200,
         headers: { "content-length": String(zipBytes.byteLength) },
+      });
+    }
+    if (url === "https://example.test/ModuleManager.zip") {
+      return new Response(Buffer.from(mmZipBytes), {
+        status: 200,
+        headers: { "content-length": String(mmZipBytes.byteLength) },
       });
     }
     return new Response("missing", { status: 404 });
@@ -143,7 +214,7 @@ async function createInstallTestApp() {
   await request(app).put("/api/v1/config").send({ installationPath: ksp });
   await request(app).post("/api/v1/registry/refresh");
 
-  return { app, home, ksp, sha256 };
+  return { app, home, ksp, sha256: exampleHash.sha256 };
 }
 
 async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
@@ -179,7 +250,7 @@ describe("mod install API", () => {
     expect(finished).toMatchObject({ status: "succeeded", phase: "done", version: "1.0.0" });
 
     const readme = readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8");
-    expect(readme).toContain("hello from example mod");
+    expect(readme).toContain("hello from ExampleMod");
 
     const inventory = await request(app).get("/api/v1/installed-mods");
     expect(inventory.status).toBe(200);
@@ -338,13 +409,20 @@ describe("mod install API", () => {
     writeFileSync(join(ksp, "KSP.x86_64"), "");
     writeFileSync(join(ksp, "readme.txt"), "Version 1.12.5");
 
-    const goodZip = fixtureModZip();
-    const sha256 = createHash("sha256").update(goodZip).digest("hex");
-    const sha1 = createHash("sha1").update(goodZip).digest("hex");
+    const goodZip = fixtureModZip("ExampleMod");
+    const mmZip = fixtureModZip("ModuleManager");
+    const exampleHash = {
+      sha256: createHash("sha256").update(goodZip).digest("hex"),
+      sha1: createHash("sha1").update(goodZip).digest("hex"),
+    };
+    const moduleManagerHash = {
+      sha256: createHash("sha256").update(mmZip).digest("hex"),
+      sha1: createHash("sha1").update(mmZip).digest("hex"),
+    };
     const registryService = new RegistryService(
       {
         async get() {
-          return fixtureMetaArchive(sha256, sha1);
+          return fixtureMetaArchive(exampleHash, moduleManagerHash);
         },
       },
       new TarGzArchive(),
@@ -400,5 +478,85 @@ describe("mod install API", () => {
     expect(eventsResponse.status).toBe(200);
     expect(eventsResponse.headers["content-type"]).toMatch(/text\/event-stream/);
     expect(String(eventsResponse.body)).toContain('"status":"succeeded"');
+  });
+
+  it("plans dependencies and installs them when requested", async () => {
+    const { app, ksp } = await createInstallTestApp();
+
+    const plan = await request(app).post("/api/v1/mods/DependentMod/plan").send({});
+    expect(plan.status).toBe(200);
+    expect(plan.body.status).toBe("ok");
+    expect(plan.body.toInstall.map((entry: { identifier: string }) => entry.identifier)).toEqual([
+      "ModuleManager",
+      "DependentMod",
+    ]);
+
+    const accepted = await request(app)
+      .post("/api/v1/mods/DependentMod/install")
+      .send({ installDependencies: true });
+    expect(accepted.status).toBe(202);
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+    expect(finished.status).toBe("succeeded");
+
+    expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
+    expect(readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"), "utf8")).toContain("ExampleMod");
+
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ identifier: "ModuleManager", status: "managed" }),
+        expect.objectContaining({ identifier: "DependentMod", status: "managed" }),
+      ]),
+    );
+  });
+
+  it("blocks dependency installs that conflict with detected mods", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    mkdirSync(join(ksp, "GameData", "DetectedOnly"), { recursive: true });
+
+    const plan = await request(app).post("/api/v1/mods/DependentMod/plan").send({});
+    expect(plan.status).toBe(200);
+    expect(plan.body.status).toBe("blocked");
+    expect(plan.body.conflicts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ conflictingWith: "DetectedOnly" })]),
+    );
+
+    const rejected = await request(app)
+      .post("/api/v1/mods/DependentMod/install")
+      .send({ installDependencies: true });
+    expect(rejected.status).toBe(422);
+    expect(rejected.body.code).toBe("PLAN_BLOCKED");
+  });
+
+  it("keeps Phase 4 install behavior when installDependencies is false", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/DependentMod/install").send({});
+    expect(accepted.status).toBe(202);
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+    expect(finished.status).toBe("succeeded");
+    expect(readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"), "utf8")).toContain("ExampleMod");
+    expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+  });
+
+  it("rolls back earlier modules when a later dependency install fails", async () => {
+    const { app, ksp } = await createInstallTestApp();
+
+    const accepted = await request(app)
+      .post("/api/v1/mods/BrokenDependent/install")
+      .send({ installDependencies: true });
+    expect(accepted.status).toBe(202);
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+    expect(finished.status).toBe("failed");
+
+    expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+    expect(() => readFileSync(join(ksp, "GameData", "BrokenDependent", "readme.txt"))).toThrow();
+
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "ModuleManager")).toBe(
+      false,
+    );
+    expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "BrokenDependent")).toBe(
+      false,
+    );
   });
 });

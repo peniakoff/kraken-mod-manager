@@ -4,6 +4,7 @@ import {
   directoryListingResponseSchema,
   healthResponseSchema,
   installAcceptedResponseSchema,
+  installPlanResponseSchema,
   installedModsResponseSchema,
   installationsResponseSchema,
   jobProgressEventSchema,
@@ -14,6 +15,7 @@ import {
   type DirectoryListingResponse,
   type HealthResponse,
   type InstallAcceptedResponse,
+  type InstallPlanResponse,
   type InstalledModsResponse,
   type InstallationsResponse,
   type JobProgressEvent,
@@ -92,11 +94,26 @@ export async function getInstalledMods(): Promise<InstalledModsResponse> {
   return request("/api/v1/installed-mods", installedModsResponseSchema);
 }
 
-export async function installMod(identifier: string, version?: string): Promise<InstallAcceptedResponse> {
-  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/install`, installAcceptedResponseSchema, {
+export async function planModInstall(identifier: string, version?: string): Promise<InstallPlanResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/plan`, installPlanResponseSchema, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(version === undefined ? {} : { version }),
+  });
+}
+
+export async function installMod(
+  identifier: string,
+  version?: string,
+  installDependencies = false,
+): Promise<InstallAcceptedResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/install`, installAcceptedResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(version === undefined ? {} : { version }),
+      installDependencies,
+    }),
   });
 }
 

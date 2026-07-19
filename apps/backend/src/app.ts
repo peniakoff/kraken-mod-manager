@@ -5,12 +5,14 @@ import {
   healthResponseSchema,
   installAcceptedResponseSchema,
   installModRequestSchema,
+  installPlanResponseSchema,
   installedModsResponseSchema,
   installationsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
+  planModRequestSchema,
   registryResponseSchema,
   updateConfigRequestSchema,
 } from "@kraken/contracts";
@@ -255,6 +257,31 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
   });
 
+  app.post("/api/v1/mods/:identifier/plan", async (request, response, next) => {
+    const body = planModRequestSchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      sendError(response, 400, "INVALID_REQUEST", "Invalid plan request.");
+      return;
+    }
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0) {
+      sendError(response, 400, "INVALID_REQUEST", "A mod identifier is required.");
+      return;
+    }
+
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      const plan = await dependencies.installService.planInstall(kspPath, identifier, body.data.version);
+      response.json(installPlanResponseSchema.parse(plan));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/v1/mods/:identifier/install", async (request, response, next) => {
     const body = installModRequestSchema.safeParse(request.body ?? {});
     if (!body.success) {
@@ -273,8 +300,12 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
         return;
       }
-      await dependencies.registryService.ensureLoaded();
-      const job = dependencies.installService.startInstall(kspPath, identifier, body.data.version);
+      const job = await dependencies.installService.startInstall(
+        kspPath,
+        identifier,
+        body.data.version,
+        body.data.installDependencies,
+      );
       response.status(202).json(installAcceptedResponseSchema.parse({ job }));
     } catch (error) {
       next(error);
@@ -403,7 +434,9 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404
-            : error.code === "NOT_MANAGED" || error.code === "NO_DOWNLOAD"
+            : error.code === "NOT_MANAGED" ||
+                error.code === "NO_DOWNLOAD" ||
+                error.code === "PLAN_BLOCKED"
               ? 422
               : 500;
       sendError(response, status, error.code, error.message);

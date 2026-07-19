@@ -71,9 +71,9 @@
 ## Phase 5: Dependency Resolver (The Brain)
 *Goal: Handle complex mod relationships, dependencies, and conflicts.*
 
-- [ ] **5.1. Relationship Parsing:**
+- [x] **5.1. Relationship Parsing:**
     *   Analyze `depends`, `conflicts`, `recommends`, and `suggests` fields from `.ckan` files.
-- [ ] **5.2. Auto-Resolution Algorithm (SAT-like Solver):**
+- [x] **5.2. Auto-Resolution Algorithm (SAT-like Solver):**
     *   Write logic that checks if a requested mod requires other libraries (e.g., *ModuleManager*).
     *   Present a unified Vue modal: *"This mod requires Mod X and Mod Y. Install automatically?"* and add them to the installation queue.
 

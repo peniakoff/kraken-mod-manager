@@ -36,7 +36,7 @@ port, and `KMM_OPEN_BROWSER=false` to suppress opening the default browser.
 - `packages/contracts` — validated API contracts shared between client and
   server.
 - `packages/core` — framework-independent KSP detection, CKAN metadata parsing,
-  registry indexing, and install/uninstall policy.
+  registry indexing, dependency planning, and install/uninstall policy.
 
 ## KSP setup
 
@@ -71,14 +71,20 @@ CKAN defaults). Managed installs are tracked in `install-manifest.json`;
 uninstall removes only those tracked files. Inventory also detects top-level
 `GameData` folders that match known registry identifiers.
 
+Before install, Kraken can dry-run a dependency plan from CKAN `depends` /
+`conflicts` (`POST /api/v1/mods/:identifier/plan`). When confirmed, hard
+dependencies install first in one job (`installDependencies: true`). Optional
+`recommends` / `suggests` are reported in the plan only.
+
 Install progress is streamed with Server-Sent Events on
 `GET /api/v1/jobs/:jobId/events`.
 
 The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
 `GET`/`PUT /api/v1/config`, `GET /api/v1/fs/directories`, `GET /api/v1/registry`,
 `POST /api/v1/registry/refresh`, `GET /api/v1/mods`, `GET /api/v1/installed-mods`,
-`POST /api/v1/mods/:identifier/install`, `DELETE /api/v1/mods/:identifier`,
-`GET /api/v1/jobs/:jobId`, and `GET /api/v1/jobs/:jobId/events`.
+`POST /api/v1/mods/:identifier/plan`, `POST /api/v1/mods/:identifier/install`,
+`DELETE /api/v1/mods/:identifier`, `GET /api/v1/jobs/:jobId`, and
+`GET /api/v1/jobs/:jobId/events`.
 
 ## Verification
 

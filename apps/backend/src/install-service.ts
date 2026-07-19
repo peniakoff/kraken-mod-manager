@@ -1,16 +1,18 @@
-import type { JobProgressEvent, JobResponse } from "@kraken/contracts";
+import type { InstallPlanResponse, JobProgressEvent, JobResponse } from "@kraken/contracts";
 import {
   buildInventory,
   InstallPolicyError,
   isAllowedDestination,
   normalizeSlashPath,
   resolveInstallMappings,
+  resolveInstallPlan,
   verifyDownloadHash,
   type CkanModule,
   type FileSystemPort,
   type InstalledModSummary,
   type ManagedModRecord,
 } from "@kraken/core";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
@@ -29,7 +31,8 @@ export class InstallServiceError extends Error {
       | "INSTALL_FAILED"
       | "UNINSTALL_FAILED"
       | "JOB_NOT_FOUND"
-      | "NOT_MANAGED",
+      | "NOT_MANAGED"
+      | "PLAN_BLOCKED",
   ) {
     super(message);
     this.name = "InstallServiceError";
@@ -74,9 +77,31 @@ export class InstallService {
     return buildInventory(directories, managed, knownIdentifiers, knownNames);
   }
 
-  startInstall(kspPath: string, identifier: string, version?: string): JobResponse {
+  async planInstall(kspPath: string, identifier: string, version?: string): Promise<InstallPlanResponse> {
+    await this.registryService.ensureLoaded();
+    const target = this.findModule(identifier, version);
+    const inventory = await this.listInstalled(kspPath);
+    return resolveInstallPlan({
+      target,
+      registryModules: this.registryService.listModules(),
+      inventory,
+    });
+  }
+
+  async startInstall(
+    kspPath: string,
+    identifier: string,
+    version?: string,
+    installDependencies = false,
+  ): Promise<JobResponse> {
+    await this.registryService.ensureLoaded();
+    const target = this.findModule(identifier, version);
+    // Resolve and pin the module list before accepting the job so the worker
+    // installs exactly what was validated (no second inventory replan).
+    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies);
+
     const job = this.jobStore.create(identifier, version);
-    void this.runInstall(job.jobId, kspPath, identifier, version);
+    void this.runInstall(job.jobId, kspPath, target, modulesToInstall);
     return this.jobStore.toResponse(job);
   }
 
@@ -143,111 +168,48 @@ export class InstallService {
     }
   }
 
-  private async runInstall(jobId: string, kspPath: string, identifier: string, version?: string): Promise<void> {
+  private async runInstall(
+    jobId: string,
+    kspPath: string,
+    target: CkanModule,
+    modulesToInstall: readonly CkanModule[],
+  ): Promise<void> {
+    const completed: ModuleInstallSnapshot[] = [];
     try {
       this.jobStore.update(jobId, { status: "running", phase: "downloading", message: "Resolving module metadata." });
-      await this.registryService.ensureLoaded();
-      const module = this.findModule(identifier, version);
-      if (module.download === undefined || module.download.length === 0) {
-        throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
+
+      for (const [index, module] of modulesToInstall.entries()) {
+        const stepLabel =
+          modulesToInstall.length > 1
+            ? ` (${index + 1}/${modulesToInstall.length}: ${module.identifier})`
+            : "";
+        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel);
+        completed.push(snapshot);
       }
-
-      this.jobStore.update(jobId, {
-        status: "running",
-        phase: "downloading",
-        message: "Downloading archive.",
-        version: module.version,
-        bytesReceived: 0,
-        ...(module.downloadSize !== undefined ? { bytesTotal: module.downloadSize } : {}),
-      });
-
-      const download = await this.http.get(module.download, (progress) => {
-        this.jobStore.update(jobId, {
-          phase: "downloading",
-          bytesReceived: progress.bytesReceived,
-          ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
-        });
-      });
-
-      this.jobStore.update(jobId, { phase: "verifying", message: "Verifying download hash." });
-      verifyDownloadHash(download.bytes, module.downloadHash, {
-        sha1: download.sha1,
-        sha256: download.sha256,
-      });
-
-      await mkdir(this.downloadCacheDirectory, { recursive: true });
-      const cachePath = join(this.downloadCacheDirectory, `${module.identifier}-${module.version}.zip`);
-      await writeFile(cachePath, download.bytes);
-
-      this.jobStore.update(jobId, { phase: "extracting", message: "Extracting archive." });
-      const zipEntries = this.zip.extractFiles(download.bytes);
-      const mappings = resolveInstallMappings(
-        module,
-        zipEntries.map((entry) => entry.path),
-      );
-      const bySource = new Map(zipEntries.map((entry) => [entry.path, entry.data]));
-
-      this.jobStore.update(jobId, { phase: "installing", message: "Copying files into GameData." });
-      await this.withManifestMutation(async () => {
-        const canonicalRoot = await this.fileSystem.realpath(kspPath);
-        const manifest = await this.manifestStore.read();
-        const previous = manifest.mods.find(
-          (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
-        );
-        const previousFiles = await this.readInstalledFiles(canonicalRoot, previous?.files ?? []);
-        const installedFiles: string[] = [];
-
-        try {
-          for (const mapping of mappings) {
-            if (!isAllowedDestination(mapping.destinationPath)) {
-              throw new InstallPolicyError(
-                `Destination escapes allowed roots: ${mapping.destinationPath}`,
-                "INVALID_DESTINATION",
-              );
-            }
-            const data = bySource.get(mapping.sourcePath);
-            if (data === undefined) {
-              throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
-            }
-            const relativeDestination = normalizeSlashPath(mapping.destinationPath);
-            const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
-            installedFiles.push(relativeDestination);
-            await mkdir(dirname(absoluteDestination), { recursive: true });
-            await writeFile(absoluteDestination, data);
-          }
-
-          const installedSet = new Set(installedFiles);
-          const staleFiles = previous?.files.filter((file) => !installedSet.has(file)) ?? [];
-          for (const staleFile of [...staleFiles].sort((left, right) => right.length - left.length)) {
-            await this.removeInstalledPath(canonicalRoot, staleFile);
-          }
-          await this.pruneEmptyParents(canonicalRoot, staleFiles);
-
-          const record: ManagedModRecord = {
-            identifier: module.identifier,
-            name: module.name,
-            version: module.version,
-            installationPath: canonicalRoot,
-            files: installedFiles,
-          };
-          const nextMods = manifest.mods.filter(
-            (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
-          );
-          nextMods.push(record);
-          await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
-        } catch (error: unknown) {
-          await this.rollbackInstall(canonicalRoot, installedFiles, previousFiles);
-          throw error;
-        }
-      });
 
       this.jobStore.update(jobId, {
         status: "succeeded",
         phase: "done",
         message: "Install completed.",
-        version: module.version,
+        version: target.version,
       });
     } catch (error: unknown) {
+      if (completed.length > 0) {
+        try {
+          await this.rollbackCompletedModules(kspPath, completed);
+        } catch (rollbackError: unknown) {
+          const message = error instanceof Error ? error.message : "Install failed.";
+          const rollbackMessage =
+            rollbackError instanceof Error ? rollbackError.message : "Job rollback failed.";
+          this.jobStore.update(jobId, {
+            status: "failed",
+            phase: "failed",
+            error: `${message} Rollback also failed: ${rollbackMessage}`,
+            message: `${message} Rollback also failed: ${rollbackMessage}`,
+          });
+          return;
+        }
+      }
       const message = error instanceof Error ? error.message : "Install failed.";
       this.jobStore.update(jobId, {
         status: "failed",
@@ -256,6 +218,191 @@ export class InstallService {
         message,
       });
     }
+  }
+
+  private async resolveModulesForInstall(
+    kspPath: string,
+    target: CkanModule,
+    installDependencies: boolean,
+  ): Promise<CkanModule[]> {
+    if (!installDependencies) {
+      if (target.download === undefined || target.download.length === 0) {
+        throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
+      }
+      return [target];
+    }
+
+    const inventory = await this.listInstalled(kspPath);
+    const plan = resolveInstallPlan({
+      target,
+      registryModules: this.registryService.listModules(),
+      inventory,
+    });
+    if (plan.status === "blocked") {
+      const details = [
+        ...plan.conflicts.map((entry) => entry.message),
+        ...plan.unmet.map((entry) => entry.message),
+      ].join(" ");
+      throw new InstallServiceError(
+        details.length > 0 ? `Install plan blocked. ${details}` : "Install plan blocked.",
+        "PLAN_BLOCKED",
+      );
+    }
+
+    const modules: CkanModule[] = [];
+    for (const ref of plan.toInstall) {
+      const module = this.findModule(ref.identifier, ref.version);
+      if (module.download === undefined || module.download.length === 0) {
+        throw new InstallServiceError(
+          `Dependency ${module.identifier} does not declare a download URL.`,
+          "NO_DOWNLOAD",
+        );
+      }
+      modules.push(module);
+    }
+    return modules;
+  }
+
+  private async installSingleModule(
+    jobId: string,
+    kspPath: string,
+    module: CkanModule,
+    stepLabel: string,
+  ): Promise<ModuleInstallSnapshot> {
+    if (module.download === undefined || module.download.length === 0) {
+      throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
+    }
+
+    this.jobStore.update(jobId, {
+      status: "running",
+      phase: "downloading",
+      message: `Downloading archive${stepLabel}.`,
+      version: module.version,
+      bytesReceived: 0,
+      ...(module.downloadSize !== undefined ? { bytesTotal: module.downloadSize } : {}),
+    });
+
+    const download = await this.http.get(module.download, (progress) => {
+      this.jobStore.update(jobId, {
+        phase: "downloading",
+        bytesReceived: progress.bytesReceived,
+        ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
+      });
+    });
+
+    this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
+    verifyDownloadHash(download.bytes, module.downloadHash, {
+      sha1: download.sha1,
+      sha256: download.sha256,
+    });
+
+    await mkdir(this.downloadCacheDirectory, { recursive: true });
+    const cachePath = resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version);
+    await writeFile(cachePath, download.bytes);
+
+    this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
+    const zipEntries = this.zip.extractFiles(download.bytes);
+    const mappings = resolveInstallMappings(
+      module,
+      zipEntries.map((entry) => entry.path),
+    );
+    const bySource = new Map(zipEntries.map((entry) => [entry.path, entry.data]));
+
+    this.jobStore.update(jobId, { phase: "installing", message: `Copying files into GameData${stepLabel}.` });
+    return await this.withManifestMutation(async () => {
+      const canonicalRoot = await this.fileSystem.realpath(kspPath);
+      const manifest = await this.manifestStore.read();
+      const previous = manifest.mods.find(
+        (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
+      );
+      const previousFiles = await this.readInstalledFiles(canonicalRoot, previous?.files ?? []);
+      const previousRecord = previous === undefined ? undefined : { ...previous, files: [...previous.files] };
+      const installedFiles: string[] = [];
+
+      try {
+        for (const mapping of mappings) {
+          if (!isAllowedDestination(mapping.destinationPath)) {
+            throw new InstallPolicyError(
+              `Destination escapes allowed roots: ${mapping.destinationPath}`,
+              "INVALID_DESTINATION",
+            );
+          }
+          const data = bySource.get(mapping.sourcePath);
+          if (data === undefined) {
+            throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
+          }
+          const relativeDestination = normalizeSlashPath(mapping.destinationPath);
+          const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
+          installedFiles.push(relativeDestination);
+          await mkdir(dirname(absoluteDestination), { recursive: true });
+          await writeFile(absoluteDestination, data);
+        }
+
+        const installedSet = new Set(installedFiles);
+        const staleFiles = previous?.files.filter((file) => !installedSet.has(file)) ?? [];
+        for (const staleFile of [...staleFiles].sort((left, right) => right.length - left.length)) {
+          await this.removeInstalledPath(canonicalRoot, staleFile);
+        }
+        await this.pruneEmptyParents(canonicalRoot, staleFiles);
+
+        const record: ManagedModRecord = {
+          identifier: module.identifier,
+          name: module.name,
+          version: module.version,
+          installationPath: canonicalRoot,
+          files: installedFiles,
+        };
+        const nextMods = manifest.mods.filter(
+          (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
+        );
+        nextMods.push(record);
+        await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
+        return {
+          identifier: module.identifier,
+          installationPath: canonicalRoot,
+          installedFiles: [...installedFiles],
+          ...(previousRecord !== undefined ? { previousRecord } : {}),
+          previousFiles,
+        };
+      } catch (error: unknown) {
+        await this.rollbackInstall(canonicalRoot, installedFiles, previousFiles);
+        throw error;
+      }
+    });
+  }
+
+  private async rollbackCompletedModules(
+    kspPath: string,
+    completed: readonly ModuleInstallSnapshot[],
+  ): Promise<void> {
+    await this.withManifestMutation(async () => {
+      const canonicalRoot = await this.fileSystem.realpath(kspPath);
+      let manifest = await this.manifestStore.read();
+
+      for (const snapshot of [...completed].reverse()) {
+        if (snapshot.installationPath !== canonicalRoot) {
+          continue;
+        }
+        await this.rollbackInstall(canonicalRoot, snapshot.installedFiles, snapshot.previousFiles);
+        if (snapshot.previousRecord === undefined) {
+          manifest = {
+            schemaVersion: 1,
+            mods: manifest.mods.filter(
+              (mod) =>
+                mod.identifier !== snapshot.identifier || mod.installationPath !== snapshot.installationPath,
+            ),
+          };
+        } else {
+          const restored = snapshot.previousRecord;
+          const without = manifest.mods.filter(
+            (mod) => mod.identifier !== restored.identifier || mod.installationPath !== restored.installationPath,
+          );
+          without.push(restored);
+          manifest = { schemaVersion: 1, mods: without };
+        }
+        await this.manifestStore.write(manifest);
+      }
+    });
   }
 
   private findModule(identifier: string, version?: string): CkanModule {
@@ -381,6 +528,24 @@ export class InstallService {
 function containsPath(root: string, candidate: string): boolean {
   const pathRelative = relative(root, candidate);
   return pathRelative === "" || (!pathRelative.startsWith("..") && !isAbsolute(pathRelative));
+}
+
+/** Stable, path-safe cache filename derived from identifier+version (not from raw strings). */
+export function resolveDownloadCachePath(cacheDirectory: string, identifier: string, version: string): string {
+  const digest = createHash("sha256").update(`${identifier}\0${version}`, "utf8").digest("hex");
+  const cachePath = resolve(cacheDirectory, `${digest}.zip`);
+  if (!containsPath(resolve(cacheDirectory), cachePath)) {
+    throw new InstallServiceError("Download cache path escapes cache directory.", "INSTALL_FAILED");
+  }
+  return cachePath;
+}
+
+interface ModuleInstallSnapshot {
+  identifier: string;
+  installationPath: string;
+  installedFiles: string[];
+  previousRecord?: ManagedModRecord;
+  previousFiles: Map<string, Uint8Array>;
 }
 
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
