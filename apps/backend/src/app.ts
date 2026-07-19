@@ -21,6 +21,7 @@ import {
   validateKspInstallation,
 } from "@kraken/core";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigStore, ConfigStoreError } from "./adapters/config-store.js";
@@ -58,6 +59,11 @@ export interface AppDependencies {
   registryService: RegistryService;
   installService: InstallService;
   frontendDirectory?: string;
+  /** Overrides SPA fallback sendFile rate limit (defaults: 300 / 15 min). */
+  spaFallbackRateLimit?: {
+    windowMs: number;
+    limit: number;
+  };
 }
 
 export function createDefaultDependencies(frontendDirectory = process.env.KMM_FRONTEND_DIR): AppDependencies {
@@ -353,7 +359,18 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     // Express 5 requires a named wildcard (`/{*path}`); bare `*` / `/*` throw.
     // Skip dotted paths so missing `.js`/`.css` assets stay 404 instead of
     // returning `index.html` (Accept: */* still matches `accepts("html")`).
-    app.get("/{*path}", (request, response, next) => {
+    // Rate-limit filesystem access via sendFile (CodeQL js/missing-rate-limiting).
+    const spaFallbackRateLimit = dependencies.spaFallbackRateLimit ?? {
+      windowMs: 15 * 60 * 1000,
+      limit: 300,
+    };
+    const spaFallbackLimiter = rateLimit({
+      windowMs: spaFallbackRateLimit.windowMs,
+      limit: spaFallbackRateLimit.limit,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+    });
+    app.get("/{*path}", spaFallbackLimiter, (request, response, next) => {
       if (request.path.includes(".") || !request.accepts("html")) {
         next();
         return;
