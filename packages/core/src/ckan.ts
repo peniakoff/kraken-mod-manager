@@ -416,13 +416,26 @@ function splitVersion(version: string): { epoch: number; parts: Array<{ numeric:
   const epoch = epochMatch === null ? 0 : Number(epochMatch[1]);
   const remainder = epochMatch === null ? trimmed : epochMatch[2]!;
   const parts = remainder.split(/[.+_-]/).filter((part) => part.length > 0).map((part) => {
-    const match = /^(\d*)(.*)$/.exec(part);
+    // Linear scan avoids `/^(\d*)(.*)$/` (CodeQL js/polynomial-redos).
+    const digitEnd = countLeadingDigits(part);
     return {
-      numeric: match?.[1] ? Number(match[1]) : 0,
-      text: match?.[2] ?? "",
+      numeric: digitEnd > 0 ? Number(part.slice(0, digitEnd)) : 0,
+      text: part.slice(digitEnd),
     };
   });
   return { epoch, parts };
+}
+
+function countLeadingDigits(value: string): number {
+  let index = 0;
+  while (index < value.length) {
+    const code = value.charCodeAt(index);
+    if (code < 48 || code > 57) {
+      break;
+    }
+    index += 1;
+  }
+  return index;
 }
 
 function normalizeVersionComponents(version: string): number[] | undefined {

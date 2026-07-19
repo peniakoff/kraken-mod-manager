@@ -147,6 +147,16 @@ test("compares CKAN versions with epochs", () => {
   assert.equal(compareCkanVersions("1.0.0", "1.0.0"), 0);
 });
 
+test("compares CKAN versions with alphanumeric parts", () => {
+  assert.ok(compareCkanVersions("1.0.1", "1.0.0beta") > 0);
+  assert.ok(compareCkanVersions("1.0a", "1.0") > 0);
+  assert.ok(compareCkanVersions("1.10", "1.9") > 0);
+  // Long digit runs must stay linear-time (no polynomial ReDoS).
+  const longDigits = "9".repeat(10_000);
+  assert.equal(compareCkanVersions(longDigits, longDigits), 0);
+  assert.ok(compareCkanVersions(`${longDigits}a`, longDigits) > 0);
+});
+
 test("checks KSP compatibility ranges", () => {
   assert.equal(
     isCompatibleWithKsp(
