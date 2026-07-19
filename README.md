@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="assets/logo.png" alt="Kraken Mod Manager" width="192" height="192" />
-</p>
-
 # Kraken Mod Manager (KMM)
+
+![Kraken Mod Manager](assets/logo.png)
 
 Kraken Mod Manager (KMM) is a modern, lightweight, cross-platform mod manager
 for Kerbal Space Program (KSP). It takes architectural inspiration from CKAN,
