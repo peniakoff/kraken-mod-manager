@@ -23,10 +23,12 @@ single-file components. Restore full SFC type-checking when an upstream
 
 ## Security baseline
 
-The local API is intentionally loopback-only. State-changing endpoints validate
-their input, constrain file-system access to an explicitly selected KSP
-installation, and protect against browser-origin requests. Archive installation
-validates hashes when present and rejects path traversal (Zip Slip).
+The local API is intentionally loopback-only, which keeps the service off the
+LAN and public internet. State-changing endpoints validate their input and
+constrain file-system access to an explicitly selected KSP installation.
+Archive installation validates hashes when present and rejects path traversal
+(Zip Slip). Explicit browser-origin / CSRF checks are not implemented yet;
+loopback binding is the primary remote-access control today.
 
 ## Packaging direction
 
