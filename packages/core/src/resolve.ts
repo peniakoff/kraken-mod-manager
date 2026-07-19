@@ -96,6 +96,9 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       return;
     }
     for (const relation of relationships.recommends) {
+      if (relation.unsupported) {
+        continue;
+      }
       optional.push({
         kind: "recommends",
         name: relation.name,
@@ -105,6 +108,9 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       });
     }
     for (const relation of relationships.suggests) {
+      if (relation.unsupported) {
+        continue;
+      }
       optional.push({
         kind: "suggests",
         name: relation.name,
@@ -121,8 +127,16 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       return;
     }
     for (const relation of relationships.conflicts) {
+      if (relation.unsupported) {
+        conflicts.push({
+          identifier: module.identifier,
+          conflictingWith: relation.name,
+          message: `${module.identifier} declares an unsupported conflict relationship (${relation.name}) that Kraken cannot evaluate yet.`,
+        });
+        continue;
+      }
       const installedMatch = installed.get(relation.name);
-      if (installedMatch !== undefined && versionMatchesInstalled(installedMatch, relation)) {
+      if (installedMatch !== undefined && versionMatchesInstalled(installedMatch, relation, "conflicts")) {
         conflicts.push({
           identifier: module.identifier,
           conflictingWith: relation.name,
@@ -147,6 +161,35 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     }
   }
 
+  function checkInstalledModuleConflicts(): void {
+    for (const [identifier, installedMod] of installed) {
+      const meta = findInstalledMetadata(byIdentifier.get(identifier) ?? [], installedMod);
+      if (meta === undefined) {
+        continue;
+      }
+      for (const relation of meta.relationships?.conflicts ?? []) {
+        if (relation.unsupported) {
+          continue;
+        }
+        if (relation.name === target.identifier && versionMatchesModule(target, relation)) {
+          conflicts.push({
+            identifier: meta.identifier,
+            conflictingWith: target.identifier,
+            message: `Installed ${meta.identifier} conflicts with target ${target.identifier}.`,
+          });
+        }
+        const plannedMatch = planned.get(relation.name);
+        if (plannedMatch !== undefined && versionMatchesModule(plannedMatch, relation)) {
+          conflicts.push({
+            identifier: meta.identifier,
+            conflictingWith: relation.name,
+            message: `Installed ${meta.identifier} conflicts with planned ${relation.name} ${plannedMatch.version}.`,
+          });
+        }
+      }
+    }
+  }
+
   function resolveDepends(module: CkanModule): void {
     if (visiting.has(module.identifier)) {
       return;
@@ -157,12 +200,21 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
 
     const depends = module.relationships?.depends ?? [];
     for (const relation of depends) {
+      if (relation.unsupported) {
+        unmet.push({
+          name: relation.name,
+          requiredBy: module.identifier,
+          message: `${module.identifier} has an unsupported dependency relationship (${relation.name}) that Kraken cannot resolve yet.`,
+        });
+        continue;
+      }
+
       if (relation.name === module.identifier) {
         continue;
       }
 
       const installedMatch = installed.get(relation.name);
-      if (installedMatch !== undefined && versionMatchesInstalled(installedMatch, relation)) {
+      if (installedMatch !== undefined && versionMatchesInstalled(installedMatch, relation, "depends")) {
         noteSatisfied(installedMatch, installedMatch.status);
         continue;
       }
@@ -205,6 +257,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   }
 
   resolveDepends(target);
+  checkInstalledModuleConflicts();
 
   // Target is always part of the install set (reinstall / primary install).
   const toInstallModules = [...planned.values(), target];
@@ -246,14 +299,40 @@ function pickLatestCompatible(candidates: readonly CkanModule[], relation: CkanR
   );
 }
 
+function findInstalledMetadata(
+  candidates: readonly CkanModule[],
+  installedMod: InstalledModSummary,
+): CkanModule | undefined {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  if (installedMod.version !== undefined) {
+    const exact = candidates.find((module) => module.version === installedMod.version);
+    if (exact !== undefined) {
+      return exact;
+    }
+  }
+  return candidates.reduce((best, current) =>
+    compareCkanVersions(current.version, best.version) > 0 ? current : best,
+  );
+}
+
 function versionMatchesModule(module: CkanModule, relation: CkanRelationship): boolean {
   return versionInRange(module.version, relation.minVersion, relation.maxVersion);
 }
 
-function versionMatchesInstalled(mod: InstalledModSummary, relation: CkanRelationship): boolean {
+function versionMatchesInstalled(
+  mod: InstalledModSummary,
+  relation: CkanRelationship,
+  mode: "depends" | "conflicts",
+): boolean {
   if (mod.version === undefined) {
-    // Detected mods have no version; treat as satisfied for the identifier.
-    return true;
+    if (mode === "conflicts") {
+      // No version on a detected mod: treat presence as enough to block.
+      return true;
+    }
+    // Detected without version cannot satisfy ranged depends.
+    return relation.minVersion === undefined && relation.maxVersion === undefined;
   }
   return versionInRange(mod.version, relation.minVersion, relation.maxVersion);
 }
@@ -293,7 +372,7 @@ function topologicalInstallOrder(modules: readonly CkanModule[]): InstallPlanMod
 
   for (const module of modules) {
     for (const dep of module.relationships?.depends ?? []) {
-      if (!ids.has(dep.name) || dep.name === module.identifier) {
+      if (dep.unsupported || !ids.has(dep.name) || dep.name === module.identifier) {
         continue;
       }
       edges.get(dep.name)?.push(module.identifier);

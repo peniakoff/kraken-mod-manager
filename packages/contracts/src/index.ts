@@ -92,6 +92,7 @@ export const ckanRelationshipSchema = z.object({
   name: z.string().min(1),
   minVersion: z.string().min(1).optional(),
   maxVersion: z.string().min(1).optional(),
+  unsupported: z.boolean().optional(),
 });
 
 export type CkanRelationship = z.infer<typeof ckanRelationshipSchema>;

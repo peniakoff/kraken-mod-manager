@@ -143,3 +143,95 @@ test("picks the latest compatible dependency version", () => {
   assert.equal(plan.toInstall[0]?.identifier, "ModuleManager");
   assert.equal(plan.toInstall[0]?.version, "4.1.0");
 });
+
+test("blocks unsupported any_of depends instead of ignoring them", () => {
+  const target = mod({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    version: "1.0.0",
+    relationships: {
+      depends: [{ name: "any_of", unsupported: true }],
+      conflicts: [],
+      recommends: [],
+      suggests: [],
+    },
+  });
+
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target],
+    inventory: [],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.unmet.length, 1);
+  assert.match(plan.unmet[0]?.message ?? "", /unsupported dependency/);
+});
+
+test("does not treat versionless detected mods as satisfying ranged depends", () => {
+  const moduleManager = mod({
+    identifier: "ModuleManager",
+    name: "Module Manager",
+    version: "4.2.3",
+    download: "https://example.test/mm.zip",
+  });
+  const target = mod({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    version: "1.0.0",
+    relationships: {
+      depends: [{ name: "ModuleManager", minVersion: "4.0.0" }],
+      conflicts: [],
+      recommends: [],
+      suggests: [],
+    },
+  });
+
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [moduleManager, target],
+    inventory: [{ identifier: "ModuleManager", status: "detected" }],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(
+    plan.toInstall.map((entry) => entry.identifier),
+    ["ModuleManager", "FancyMod"],
+  );
+});
+
+test("blocks when an installed mod declares a conflict with the target", () => {
+  const installedMeta = mod({
+    identifier: "OldPack",
+    name: "Old Pack",
+    version: "1.0.0",
+    relationships: {
+      depends: [],
+      conflicts: [{ name: "FancyMod" }],
+      recommends: [],
+      suggests: [],
+    },
+  });
+  const target = mod({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    version: "2.0.0",
+    relationships: {
+      depends: [],
+      conflicts: [],
+      recommends: [],
+      suggests: [],
+    },
+  });
+
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [installedMeta, target],
+    inventory: [{ identifier: "OldPack", version: "1.0.0", status: "managed" }],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.conflicts.length, 1);
+  assert.equal(plan.conflicts[0]?.identifier, "OldPack");
+  assert.equal(plan.conflicts[0]?.conflictingWith, "FancyMod");
+});

@@ -71,6 +71,28 @@ test("parses depends, conflicts, recommends, and suggests with version bounds", 
   });
 });
 
+test("marks any_of and nameless relationship entries as unsupported", () => {
+  const module = parseCkanDocument({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    author: "Author",
+    version: "2.0.0",
+    depends: [
+      {
+        any_of: [{ name: "TextureReplacer" }, { name: "DiRT" }],
+      },
+      { min_version: "1.0.0" },
+    ],
+    conflicts: [[{ name: "NestedLegacy" }]],
+  });
+
+  assert.deepEqual(module?.relationships?.depends, [
+    { name: "any_of", unsupported: true },
+    { name: "unsupported", unsupported: true },
+  ]);
+  assert.deepEqual(module?.relationships?.conflicts, [{ name: "unsupported", unsupported: true }]);
+});
+
 test("parses install stanzas and download hashes", () => {
   const module = parseCkanDocument({
     identifier: "ExampleMod",

@@ -12,6 +12,7 @@ import {
   type InstalledModSummary,
   type ManagedModRecord,
 } from "@kraken/core";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
@@ -95,12 +96,12 @@ export class InstallService {
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
-    // Validate the plan before accepting the job so blocked dependency
-    // installs fail the HTTP request instead of a queued job.
-    await this.resolveModulesForInstall(kspPath, target, installDependencies);
+    // Resolve and pin the module list before accepting the job so the worker
+    // installs exactly what was validated (no second inventory replan).
+    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies);
 
     const job = this.jobStore.create(identifier, version);
-    void this.runInstall(job.jobId, kspPath, identifier, version, installDependencies);
+    void this.runInstall(job.jobId, kspPath, target, modulesToInstall);
     return this.jobStore.toResponse(job);
   }
 
@@ -170,22 +171,20 @@ export class InstallService {
   private async runInstall(
     jobId: string,
     kspPath: string,
-    identifier: string,
-    version?: string,
-    installDependencies = false,
+    target: CkanModule,
+    modulesToInstall: readonly CkanModule[],
   ): Promise<void> {
+    const completed: ModuleInstallSnapshot[] = [];
     try {
       this.jobStore.update(jobId, { status: "running", phase: "downloading", message: "Resolving module metadata." });
-      await this.registryService.ensureLoaded();
-      const target = this.findModule(identifier, version);
-      const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies);
 
       for (const [index, module] of modulesToInstall.entries()) {
         const stepLabel =
           modulesToInstall.length > 1
             ? ` (${index + 1}/${modulesToInstall.length}: ${module.identifier})`
             : "";
-        await this.installSingleModule(jobId, kspPath, module, stepLabel);
+        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel);
+        completed.push(snapshot);
       }
 
       this.jobStore.update(jobId, {
@@ -195,6 +194,22 @@ export class InstallService {
         version: target.version,
       });
     } catch (error: unknown) {
+      if (completed.length > 0) {
+        try {
+          await this.rollbackCompletedModules(kspPath, completed);
+        } catch (rollbackError: unknown) {
+          const message = error instanceof Error ? error.message : "Install failed.";
+          const rollbackMessage =
+            rollbackError instanceof Error ? rollbackError.message : "Job rollback failed.";
+          this.jobStore.update(jobId, {
+            status: "failed",
+            phase: "failed",
+            error: `${message} Rollback also failed: ${rollbackMessage}`,
+            message: `${message} Rollback also failed: ${rollbackMessage}`,
+          });
+          return;
+        }
+      }
       const message = error instanceof Error ? error.message : "Install failed.";
       this.jobStore.update(jobId, {
         status: "failed",
@@ -253,7 +268,7 @@ export class InstallService {
     kspPath: string,
     module: CkanModule,
     stepLabel: string,
-  ): Promise<void> {
+  ): Promise<ModuleInstallSnapshot> {
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
     }
@@ -282,7 +297,7 @@ export class InstallService {
     });
 
     await mkdir(this.downloadCacheDirectory, { recursive: true });
-    const cachePath = join(this.downloadCacheDirectory, `${module.identifier}-${module.version}.zip`);
+    const cachePath = resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version);
     await writeFile(cachePath, download.bytes);
 
     this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
@@ -294,13 +309,14 @@ export class InstallService {
     const bySource = new Map(zipEntries.map((entry) => [entry.path, entry.data]));
 
     this.jobStore.update(jobId, { phase: "installing", message: `Copying files into GameData${stepLabel}.` });
-    await this.withManifestMutation(async () => {
+    return await this.withManifestMutation(async () => {
       const canonicalRoot = await this.fileSystem.realpath(kspPath);
       const manifest = await this.manifestStore.read();
       const previous = manifest.mods.find(
         (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
       );
       const previousFiles = await this.readInstalledFiles(canonicalRoot, previous?.files ?? []);
+      const previousRecord = previous === undefined ? undefined : { ...previous, files: [...previous.files] };
       const installedFiles: string[] = [];
 
       try {
@@ -341,9 +357,50 @@ export class InstallService {
         );
         nextMods.push(record);
         await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
+        return {
+          identifier: module.identifier,
+          installationPath: canonicalRoot,
+          installedFiles: [...installedFiles],
+          ...(previousRecord !== undefined ? { previousRecord } : {}),
+          previousFiles,
+        };
       } catch (error: unknown) {
         await this.rollbackInstall(canonicalRoot, installedFiles, previousFiles);
         throw error;
+      }
+    });
+  }
+
+  private async rollbackCompletedModules(
+    kspPath: string,
+    completed: readonly ModuleInstallSnapshot[],
+  ): Promise<void> {
+    await this.withManifestMutation(async () => {
+      const canonicalRoot = await this.fileSystem.realpath(kspPath);
+      let manifest = await this.manifestStore.read();
+
+      for (const snapshot of [...completed].reverse()) {
+        if (snapshot.installationPath !== canonicalRoot) {
+          continue;
+        }
+        await this.rollbackInstall(canonicalRoot, snapshot.installedFiles, snapshot.previousFiles);
+        if (snapshot.previousRecord === undefined) {
+          manifest = {
+            schemaVersion: 1,
+            mods: manifest.mods.filter(
+              (mod) =>
+                mod.identifier !== snapshot.identifier || mod.installationPath !== snapshot.installationPath,
+            ),
+          };
+        } else {
+          const restored = snapshot.previousRecord;
+          const without = manifest.mods.filter(
+            (mod) => mod.identifier !== restored.identifier || mod.installationPath !== restored.installationPath,
+          );
+          without.push(restored);
+          manifest = { schemaVersion: 1, mods: without };
+        }
+        await this.manifestStore.write(manifest);
       }
     });
   }
@@ -471,6 +528,24 @@ export class InstallService {
 function containsPath(root: string, candidate: string): boolean {
   const pathRelative = relative(root, candidate);
   return pathRelative === "" || (!pathRelative.startsWith("..") && !isAbsolute(pathRelative));
+}
+
+/** Stable, path-safe cache filename derived from identifier+version (not from raw strings). */
+export function resolveDownloadCachePath(cacheDirectory: string, identifier: string, version: string): string {
+  const digest = createHash("sha256").update(`${identifier}\0${version}`, "utf8").digest("hex");
+  const cachePath = resolve(cacheDirectory, `${digest}.zip`);
+  if (!containsPath(resolve(cacheDirectory), cachePath)) {
+    throw new InstallServiceError("Download cache path escapes cache directory.", "INSTALL_FAILED");
+  }
+  return cachePath;
+}
+
+interface ModuleInstallSnapshot {
+  identifier: string;
+  installationPath: string;
+  installedFiles: string[];
+  previousRecord?: ManagedModRecord;
+  previousFiles: Map<string, Uint8Array>;
 }
 
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {

@@ -19,6 +19,12 @@ export interface CkanRelationship {
   name: string;
   minVersion?: string;
   maxVersion?: string;
+  /**
+   * True when the CKAN entry uses a form Kraken cannot resolve yet
+   * (for example `any_of`). Resolvers must treat these as unmet/blocking
+   * rather than silently ignoring them.
+   */
+  unsupported?: boolean;
 }
 
 export interface CkanRelationships {
@@ -458,12 +464,23 @@ function parseRelationshipList(value: unknown): CkanRelationship[] {
       }
       continue;
     }
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      // Legacy / invalid nested groups — fail closed so plans cannot go green.
+      relationships.push({ name: "unsupported", unsupported: true });
       continue;
     }
     const raw = entry as Record<string, unknown>;
+    if (Object.hasOwn(raw, "any_of")) {
+      // any_of resolution is out of scope; mark unsupported so install plans block.
+      relationships.push({ name: "any_of", unsupported: true });
+      continue;
+    }
     const name = asNonEmptyString(raw.name);
     if (name === undefined) {
+      relationships.push({ name: "unsupported", unsupported: true });
       continue;
     }
     const relationship: CkanRelationship = { name };

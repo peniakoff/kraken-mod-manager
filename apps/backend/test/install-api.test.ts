@@ -92,6 +92,24 @@ function fixtureMetaArchive(
       }),
     },
     {
+      path: "CKAN-meta-master/BrokenDependent/BrokenDependent-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "BrokenDependent",
+        name: "Broken Dependent",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/BrokenDependent.zip",
+        download_size: exampleZipSize,
+        download_hash: {
+          sha256: "0".repeat(64),
+          sha1: "0".repeat(40),
+        },
+        depends: [{ name: "ModuleManager", min_version: "4.0.0" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "BrokenDependent" }],
+      }),
+    },
+    {
       path: "CKAN-meta-master/DetectedOnly/DetectedOnly-1.0.0.ckan",
       content: JSON.stringify({
         identifier: "DetectedOnly",
@@ -150,7 +168,8 @@ async function createInstallTestApp() {
     if (
       url === "https://example.test/ExampleMod.zip" ||
       url === "https://example.test/AnotherMod.zip" ||
-      url === "https://example.test/DependentMod.zip"
+      url === "https://example.test/DependentMod.zip" ||
+      url === "https://example.test/BrokenDependent.zip"
     ) {
       return new Response(Buffer.from(zipBytes), {
         status: 200,
@@ -517,5 +536,27 @@ describe("mod install API", () => {
     expect(finished.status).toBe("succeeded");
     expect(readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"), "utf8")).toContain("ExampleMod");
     expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+  });
+
+  it("rolls back earlier modules when a later dependency install fails", async () => {
+    const { app, ksp } = await createInstallTestApp();
+
+    const accepted = await request(app)
+      .post("/api/v1/mods/BrokenDependent/install")
+      .send({ installDependencies: true });
+    expect(accepted.status).toBe(202);
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+    expect(finished.status).toBe("failed");
+
+    expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+    expect(() => readFileSync(join(ksp, "GameData", "BrokenDependent", "readme.txt"))).toThrow();
+
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "ModuleManager")).toBe(
+      false,
+    );
+    expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "BrokenDependent")).toBe(
+      false,
+    );
   });
 });
