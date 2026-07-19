@@ -1,4 +1,4 @@
-import { createApp } from "../src/app.js";
+import { createApp, createDefaultDependencies } from "../src/app.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,5 +30,23 @@ describe("SPA fallback", () => {
     const asset = await request(app).get("/assets/missing.js").set("Accept", "*/*");
     expect(asset.status).toBe(404);
     expect(asset.text).not.toContain("kraken");
+  });
+
+  it("rate-limits SPA fallback sendFile responses", async () => {
+    const frontendDirectory = mkdtempSync(join(tmpdir(), "kmm-frontend-"));
+    writeFileSync(join(frontendDirectory, "index.html"), "<html>kraken</html>");
+
+    const app = createApp("test-version", {
+      ...createDefaultDependencies(frontendDirectory),
+      spaFallbackRateLimit: { windowMs: 60_000, limit: 2 },
+    });
+
+    const first = await request(app).get("/mods").set("Accept", "text/html");
+    const second = await request(app).get("/library").set("Accept", "text/html");
+    const third = await request(app).get("/settings").set("Accept", "text/html");
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
   });
 });
