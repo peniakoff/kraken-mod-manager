@@ -3,7 +3,7 @@
  * File-system I/O stays in adapters; this module is pure policy.
  */
 
-import type { CkanDownloadHash, CkanInstallStanza, CkanModule } from "./ckan.js";
+import { compareCkanVersions, type CkanDownloadHash, type CkanInstallStanza, type CkanModule } from "./ckan.js";
 
 export type InstalledModStatus = "managed" | "detected";
 
@@ -21,6 +21,13 @@ export interface InstalledModSummary {
   version?: string;
   status: InstalledModStatus;
   files?: string[];
+}
+
+export interface AvailableUpdate {
+  identifier: string;
+  name: string;
+  installedVersion: string;
+  availableVersion: string;
 }
 
 export interface InstallMapping {
@@ -110,6 +117,46 @@ export function resolveInstallMappings(
     mappings.push(...resolveStanza(stanza, files));
   }
   return dedupeMappings(mappings);
+}
+
+/**
+ * Compare installed mods against the registry and return mods with a newer
+ * published version. Installed entries without a known version are skipped.
+ */
+export function findAvailableUpdates(
+  installed: readonly InstalledModSummary[],
+  registryModules: readonly CkanModule[],
+): AvailableUpdate[] {
+  const latestByIdentifier = new Map<string, CkanModule>();
+  for (const module of registryModules) {
+    const current = latestByIdentifier.get(module.identifier);
+    if (current === undefined || compareCkanVersions(module.version, current.version) > 0) {
+      latestByIdentifier.set(module.identifier, module);
+    }
+  }
+
+  const updates: AvailableUpdate[] = [];
+  for (const mod of installed) {
+    if (mod.version === undefined || mod.version.length === 0) {
+      continue;
+    }
+    const latest = latestByIdentifier.get(mod.identifier);
+    if (latest === undefined) {
+      continue;
+    }
+    if (compareCkanVersions(latest.version, mod.version) > 0) {
+      updates.push({
+        identifier: mod.identifier,
+        name: latest.name,
+        installedVersion: mod.version,
+        availableVersion: latest.version,
+      });
+    }
+  }
+
+  return updates.sort(
+    (left, right) => left.name.localeCompare(right.name) || left.identifier.localeCompare(right.identifier),
+  );
 }
 
 export function buildInventory(

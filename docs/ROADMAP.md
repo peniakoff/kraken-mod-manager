@@ -80,7 +80,7 @@
 ## Phase 6: User Interface (Vue.js Frontend)
 *Goal: Deliver a clean, responsive, and modern UI without the overhead of Electron.*
 
-- [ ] **6.1. Dashboard View:**
+- [x] **6.1. Dashboard View:**
     *   Display active KSP installation details, total installed mods, and available updates.
     *   Keep the project brand mark from `apps/frontend/public/` / `assets/` in the app chrome.
 - [ ] **6.2. Mod Browser View:**

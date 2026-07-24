@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildInventory,
+  findAvailableUpdates,
   isAllowedDestination,
   isSafeArchivePath,
   resolveInstallMappings,
@@ -150,4 +151,47 @@ test("verifies download hashes", () => {
     (error) => error instanceof InstallPolicyError && error.code === "HASH_MISMATCH",
   );
   verifyDownloadHash(new Uint8Array(), { sha256: "abc" }, { sha256: "ABC" });
+});
+
+test("findAvailableUpdates reports newer registry versions only", () => {
+  const updates = findAvailableUpdates(
+    [
+      { identifier: "MechJeb2", name: "MechJeb 2", version: "2.14.0", status: "managed" },
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+      { identifier: "DetectedOnly", status: "detected" },
+      { identifier: "UnknownMod", version: "1.0.0", status: "managed" },
+    ],
+    [
+      {
+        identifier: "MechJeb2",
+        name: "MechJeb 2",
+        authors: ["sarbian"],
+        version: "2.14.0",
+        tags: ["plugin"],
+      },
+      {
+        identifier: "MechJeb2",
+        name: "MechJeb 2",
+        authors: ["sarbian"],
+        version: "2.15.0",
+        tags: ["plugin"],
+      },
+      {
+        identifier: "ModuleManager",
+        name: "Module Manager",
+        authors: ["sarbian"],
+        version: "4.2.3",
+        tags: ["plugin"],
+      },
+    ],
+  );
+
+  assert.deepEqual(updates, [
+    {
+      identifier: "MechJeb2",
+      name: "MechJeb 2",
+      installedVersion: "2.14.0",
+      availableVersion: "2.15.0",
+    },
+  ]);
 });

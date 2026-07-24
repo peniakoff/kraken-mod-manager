@@ -13,7 +13,11 @@ import { NodeFileSystem } from "../src/adapters/node-file-system.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
-import { ZipArchive } from "../src/adapters/zip-archive.js";
+import {
+  MAX_ZIP_ENTRY_BYTES,
+  MAX_ZIP_TOTAL_BYTES,
+  ZipArchive,
+} from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
 import { InstallService } from "../src/install-service.js";
@@ -38,6 +42,22 @@ function setFirstDeclaredZipSize(archive: Uint8Array, size: number): Uint8Array 
     }
   }
   throw new Error("ZIP central directory was not found");
+}
+
+function setAllDeclaredZipSizes(archive: Uint8Array, size: number): Uint8Array {
+  const copy = archive.slice();
+  const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
+  let found = 0;
+  for (let offset = 0; offset <= copy.byteLength - 28; offset += 1) {
+    if (view.getUint32(offset, true) === 0x02014b50) {
+      view.setUint32(offset + 24, size, true);
+      found += 1;
+    }
+  }
+  if (found === 0) {
+    throw new Error("ZIP central directory was not found");
+  }
+  return copy;
 }
 
 function fixtureMetaArchive(
@@ -384,10 +404,30 @@ describe("mod install API", () => {
       zipArchive.extractFiles(
         setFirstDeclaredZipSize(
           zipSync({ "GameData/TooLarge/file.bin": new TextEncoder().encode("small") }),
-          50 * 1024 * 1024 + 1,
+          MAX_ZIP_ENTRY_BYTES + 1,
         ),
       ),
     ).toThrow(/size limit/i);
+
+    // Bundled KSP zips can declare ~226 MiB total (above the old 200 MiB cap).
+    const bundledLike = setFirstDeclaredZipSize(
+      zipSync({ "GameData/Bundled/file.bin": new TextEncoder().encode("small") }),
+      250 * 1024 * 1024,
+    );
+    expect(zipArchive.extractFiles(bundledLike)).toEqual([
+      { path: "GameData/Bundled/file.bin", data: new TextEncoder().encode("small") },
+    ]);
+
+    // Multiple entries whose declared sizes sum past the total archive cap.
+    const manyFiles: Record<string, Uint8Array> = {};
+    const filesNeeded = Math.floor(MAX_ZIP_TOTAL_BYTES / MAX_ZIP_ENTRY_BYTES) + 1;
+    for (let index = 0; index < filesNeeded; index += 1) {
+      manyFiles[`GameData/Huge/file-${index}.bin`] = new TextEncoder().encode(`f${index}`);
+    }
+    expect(() => zipArchive.extractFiles(setAllDeclaredZipSizes(zipSync(manyFiles), MAX_ZIP_ENTRY_BYTES))).toThrow(
+      /total size limit/i,
+    );
+
     expect(zipArchive.extractFiles(zipSync({ "GameData/Empty/file.txt": new Uint8Array() }))).toEqual([
       { path: "GameData/Empty/file.txt", data: new Uint8Array() },
     ]);
@@ -558,5 +598,31 @@ describe("mod install API", () => {
     expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "BrokenDependent")).toBe(
       false,
     );
+  });
+
+  it("lists available updates for managed mods with older versions", async () => {
+    const { app, home } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await waitForJob(app, accepted.body.job.jobId);
+
+    const manifestPath = join(home, "data", "install-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      mods: Array<{ identifier: string; version: string }>;
+    };
+    const example = manifest.mods.find((mod) => mod.identifier === "ExampleMod");
+    expect(example).toBeDefined();
+    example!.version = "0.9.0";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const updates = await request(app).get("/api/v1/updates");
+    expect(updates.status).toBe(200);
+    expect(updates.body.updates).toEqual([
+      {
+        identifier: "ExampleMod",
+        name: "Example Mod",
+        installedVersion: "0.9.0",
+        availableVersion: "1.0.0",
+      },
+    ]);
   });
 });

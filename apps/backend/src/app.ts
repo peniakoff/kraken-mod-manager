@@ -15,9 +15,11 @@ import {
   planModRequestSchema,
   registryResponseSchema,
   updateConfigRequestSchema,
+  updatesResponseSchema,
 } from "@kraken/contracts";
 import {
   discoverInstallations,
+  findAvailableUpdates,
   type FileSystemPort,
   type PlatformPort,
   validateKspInstallation,
@@ -252,6 +254,22 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         return;
       }
       response.json(installedModsResponseSchema.parse({ mods: await dependencies.installService.listInstalled(kspPath) }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/updates", async (_request, response, next) => {
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      await dependencies.registryService.ensureLoaded();
+      const installed = await dependencies.installService.listInstalled(kspPath);
+      const updates = findAvailableUpdates(installed, dependencies.registryService.listModules());
+      response.json(updatesResponseSchema.parse({ updates }));
     } catch (error) {
       next(error);
     }
