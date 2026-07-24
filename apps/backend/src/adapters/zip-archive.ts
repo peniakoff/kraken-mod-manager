@@ -1,9 +1,11 @@
 import { unzipSync } from "fflate";
 import { isSafeArchivePath, normalizeSlashPath } from "@kraken/core";
 
-const MAX_ZIP_ENTRY_BYTES = 50 * 1024 * 1024;
-const MAX_ZIP_TOTAL_BYTES = 200 * 1024 * 1024;
-const MAX_ZIP_ENTRIES = 50_000;
+/** Per-file uncompressed cap (headroom for large texture atlases). */
+export const MAX_ZIP_ENTRY_BYTES = 256 * 1024 * 1024;
+/** Whole-archive uncompressed cap (bundled KSP releases can exceed 200 MiB). */
+export const MAX_ZIP_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+export const MAX_ZIP_ENTRIES = 50_000;
 
 export interface ZipFileEntry {
   path: string;
@@ -32,12 +34,24 @@ export class ZipArchive {
             throw new ZipArchiveError(`ZIP entry has an invalid size: ${file.name}`, "ZIP_TOO_LARGE");
           }
           if (file.originalSize > MAX_ZIP_ENTRY_BYTES) {
-            throw new ZipArchiveError(`ZIP entry exceeds size limit: ${file.name}`, "ZIP_TOO_LARGE");
+            throw new ZipArchiveError(
+              `ZIP entry exceeds size limit: ${file.name} (${file.originalSize} bytes > ${MAX_ZIP_ENTRY_BYTES} bytes).`,
+              "ZIP_TOO_LARGE",
+            );
           }
           declaredEntries += 1;
           declaredBytes += file.originalSize;
-          if (declaredEntries > MAX_ZIP_ENTRIES || declaredBytes > MAX_ZIP_TOTAL_BYTES) {
-            throw new ZipArchiveError("ZIP archive exceeds extraction limits.", "ZIP_TOO_LARGE");
+          if (declaredEntries > MAX_ZIP_ENTRIES) {
+            throw new ZipArchiveError(
+              `ZIP archive has too many entries (${declaredEntries} > ${MAX_ZIP_ENTRIES}).`,
+              "ZIP_TOO_LARGE",
+            );
+          }
+          if (declaredBytes > MAX_ZIP_TOTAL_BYTES) {
+            throw new ZipArchiveError(
+              `ZIP archive exceeds total size limit (${declaredBytes} bytes > ${MAX_ZIP_TOTAL_BYTES} bytes).`,
+              "ZIP_TOO_LARGE",
+            );
           }
           return true;
         },
@@ -63,15 +77,24 @@ export class ZipArchive {
         throw new ZipArchiveError(`ZIP entry path is unsafe: ${rawPath}`, "ZIP_SLIP");
       }
       if (data.byteLength > MAX_ZIP_ENTRY_BYTES) {
-        throw new ZipArchiveError(`ZIP entry exceeds size limit: ${path}`, "ZIP_TOO_LARGE");
+        throw new ZipArchiveError(
+          `ZIP entry exceeds size limit: ${path} (${data.byteLength} bytes > ${MAX_ZIP_ENTRY_BYTES} bytes).`,
+          "ZIP_TOO_LARGE",
+        );
       }
       totalBytes += data.byteLength;
       if (totalBytes > MAX_ZIP_TOTAL_BYTES) {
-        throw new ZipArchiveError("ZIP archive exceeds total extracted size limit.", "ZIP_TOO_LARGE");
+        throw new ZipArchiveError(
+          `ZIP archive exceeds total extracted size limit (${totalBytes} bytes > ${MAX_ZIP_TOTAL_BYTES} bytes).`,
+          "ZIP_TOO_LARGE",
+        );
       }
       entries.push({ path, data });
       if (entries.length > MAX_ZIP_ENTRIES) {
-        throw new ZipArchiveError("ZIP archive has too many entries.", "ZIP_TOO_LARGE");
+        throw new ZipArchiveError(
+          `ZIP archive has too many entries (${entries.length} > ${MAX_ZIP_ENTRIES}).`,
+          "ZIP_TOO_LARGE",
+        );
       }
     }
     return entries;

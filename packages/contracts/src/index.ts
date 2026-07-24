@@ -160,6 +160,21 @@ export const installedModsResponseSchema = z.object({
 
 export type InstalledModsResponse = z.infer<typeof installedModsResponseSchema>;
 
+export const availableUpdateSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1),
+  installedVersion: z.string().min(1),
+  availableVersion: z.string().min(1),
+});
+
+export type AvailableUpdate = z.infer<typeof availableUpdateSchema>;
+
+export const updatesResponseSchema = z.object({
+  updates: z.array(availableUpdateSchema),
+});
+
+export type UpdatesResponse = z.infer<typeof updatesResponseSchema>;
+
 export const installModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
   installDependencies: z.boolean().optional().default(false),

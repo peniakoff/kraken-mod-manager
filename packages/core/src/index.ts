@@ -26,12 +26,14 @@ export {
 
 export {
   buildInventory,
+  findAvailableUpdates,
   InstallPolicyError,
   isAllowedDestination,
   isSafeArchivePath,
   normalizeSlashPath,
   resolveInstallMappings,
   verifyDownloadHash,
+  type AvailableUpdate,
   type InstallMapping,
   type InstalledModStatus,
   type InstalledModSummary,

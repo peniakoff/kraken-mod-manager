@@ -22,6 +22,8 @@ import {
   type JobResponse,
   type ModsResponse,
   type RegistryResponse,
+  type UpdatesResponse,
+  updatesResponseSchema,
 } from "@kraken/contracts";
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -92,6 +94,10 @@ export async function searchMods(options: {
 
 export async function getInstalledMods(): Promise<InstalledModsResponse> {
   return request("/api/v1/installed-mods", installedModsResponseSchema);
+}
+
+export async function getUpdates(): Promise<UpdatesResponse> {
+  return request("/api/v1/updates", updatesResponseSchema);
 }
 
 export async function planModInstall(identifier: string, version?: string): Promise<InstallPlanResponse> {

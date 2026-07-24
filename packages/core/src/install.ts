@@ -3,7 +3,7 @@
  * File-system I/O stays in adapters; this module is pure policy.
  */
 
-import type { CkanDownloadHash, CkanInstallStanza, CkanModule } from "./ckan.js";
+import { compareCkanVersions, type CkanDownloadHash, type CkanInstallStanza, type CkanModule } from "./ckan.js";
 
 export type InstalledModStatus = "managed" | "detected";
 
@@ -21,6 +21,13 @@ export interface InstalledModSummary {
   version?: string;
   status: InstalledModStatus;
   files?: string[];
+}
+
+export interface AvailableUpdate {
+  identifier: string;
+  name: string;
+  installedVersion: string;
+  availableVersion: string;
 }
 
 export interface InstallMapping {
@@ -112,6 +119,46 @@ export function resolveInstallMappings(
   return dedupeMappings(mappings);
 }
 
+/**
+ * Compare installed mods against the registry and return mods with a newer
+ * published version. Installed entries without a known version are skipped.
+ */
+export function findAvailableUpdates(
+  installed: readonly InstalledModSummary[],
+  registryModules: readonly CkanModule[],
+): AvailableUpdate[] {
+  const latestByIdentifier = new Map<string, CkanModule>();
+  for (const module of registryModules) {
+    const current = latestByIdentifier.get(module.identifier);
+    if (current === undefined || compareCkanVersions(module.version, current.version) > 0) {
+      latestByIdentifier.set(module.identifier, module);
+    }
+  }
+
+  const updates: AvailableUpdate[] = [];
+  for (const mod of installed) {
+    if (mod.version === undefined || mod.version.length === 0) {
+      continue;
+    }
+    const latest = latestByIdentifier.get(mod.identifier);
+    if (latest === undefined) {
+      continue;
+    }
+    if (compareCkanVersions(latest.version, mod.version) > 0) {
+      updates.push({
+        identifier: mod.identifier,
+        name: latest.name,
+        installedVersion: mod.version,
+        availableVersion: latest.version,
+      });
+    }
+  }
+
+  return updates.sort(
+    (left, right) => left.name.localeCompare(right.name) || left.identifier.localeCompare(right.identifier),
+  );
+}
+
 export function buildInventory(
   gameDataDirectories: readonly string[],
   managed: readonly ManagedModRecord[],
@@ -192,7 +239,7 @@ function resolveStanza(stanza: CkanInstallStanza, files: readonly string[]): Ins
   let matched: string[];
   if (stanza.file !== undefined) {
     const file = normalizeSlashPath(stanza.file);
-    matched = files.filter((path) => path === file || path.startsWith(`${file}/`));
+    matched = files.filter((path) => pathEquals(path, file) || pathStartsWith(path, file));
   } else if (stanza.find !== undefined) {
     matched = findByName(files, stanza.find);
   } else if (stanza.findRegexp !== undefined) {
@@ -202,7 +249,10 @@ function resolveStanza(stanza: CkanInstallStanza, files: readonly string[]): Ins
   }
 
   if (matched.length === 0) {
-    throw new InstallPolicyError("Install stanza matched no archive entries.", "STANZA_NOT_FOUND");
+    throw new InstallPolicyError(
+      `Install stanza matched no archive entries (${describeStanza(stanza)}).`,
+      "STANZA_NOT_FOUND",
+    );
   }
 
   const sourceRoot = commonSourceRoot(matched, stanza);
@@ -217,69 +267,127 @@ function resolveStanza(stanza: CkanInstallStanza, files: readonly string[]): Ins
   });
 }
 
+function pathKey(path: string): string {
+  return normalizeSlashPath(path).toLowerCase();
+}
+
+function pathEquals(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right);
+}
+
+function pathStartsWith(path: string, prefix: string): boolean {
+  const pathLower = pathKey(path);
+  const prefixLower = pathKey(prefix);
+  return pathLower.startsWith(`${prefixLower}/`);
+}
+
+function describeStanza(stanza: CkanInstallStanza): string {
+  if (stanza.file !== undefined) {
+    return `file="${stanza.file}"`;
+  }
+  if (stanza.find !== undefined) {
+    return `find="${stanza.find}"`;
+  }
+  if (stanza.findRegexp !== undefined) {
+    return `find_regexp="${stanza.findRegexp}"`;
+  }
+  return "unspecified source";
+}
+
 function findByName(files: readonly string[], find: string): string[] {
-  const needle = find.replaceAll("\\", "/");
+  const needle = normalizeSlashPath(find.replaceAll("\\", "/"));
+  const needleParts = needle.split("/");
   const directories = new Set<string>();
+
   for (const path of files) {
     const parts = path.split("/");
-    for (let index = 0; index < parts.length; index += 1) {
-      if (parts[index] === needle) {
-        directories.add(parts.slice(0, index + 1).join("/"));
+    for (let index = 0; index <= parts.length - needleParts.length; index += 1) {
+      const candidate = parts.slice(index, index + needleParts.length);
+      if (candidate.every((part, offset) => part.toLowerCase() === needleParts[offset]!.toLowerCase())) {
+        directories.add(parts.slice(0, index + needleParts.length).join("/"));
       }
     }
   }
+
   if (directories.size === 0) {
-    return files.filter((path) => path === needle || path.endsWith(`/${needle}`));
+    const needleLower = needle.toLowerCase();
+    return files.filter((path) => {
+      const lower = path.toLowerCase();
+      return lower === needleLower || lower.endsWith(`/${needleLower}`);
+    });
   }
+
   const roots = [...directories].sort((left, right) => left.length - right.length);
   const root = roots[0]!;
-  return files.filter((path) => path === root || path.startsWith(`${root}/`));
+  return files.filter((path) => pathEquals(path, root) || pathStartsWith(path, root));
 }
 
 function findByRegexp(files: readonly string[], pattern: string): string[] {
   let regexp: RegExp;
   try {
-    regexp = new RegExp(pattern);
+    regexp = new RegExp(pattern, "i");
   } catch {
     throw new InstallPolicyError(`Invalid find_regexp: ${pattern}`, "STANZA_NOT_FOUND");
   }
-  const matches = files.filter((path) => regexp.test(path));
-  if (matches.length === 0) {
-    return [];
-  }
-  // Prefer the shortest common directory among matches when possible.
-  return matches;
+  return files.filter((path) => regexp.test(path));
 }
 
 function commonSourceRoot(matched: readonly string[], stanza: CkanInstallStanza): string {
   if (stanza.file !== undefined) {
     const file = normalizeSlashPath(stanza.file);
-    if (matched.every((path) => path === file)) {
-      // Single file: install under install_to using basename only.
-      const slash = file.lastIndexOf("/");
-      return slash === -1 ? "" : file.slice(0, slash);
+    const archiveFile = matched
+      .map((path) => archivePrefixForTarget(path, file))
+      .find((prefix): prefix is string => prefix !== undefined);
+    if (archiveFile === undefined) {
+      return sharedDirectoryPrefix(matched);
     }
-    if (matched.every((path) => path === file || path.startsWith(`${file}/`))) {
+    if (matched.every((path) => pathEquals(path, archiveFile))) {
+      // Single file: install under install_to using basename only.
+      const slash = archiveFile.lastIndexOf("/");
+      return slash === -1 ? "" : archiveFile.slice(0, slash);
+    }
+    if (matched.every((path) => pathEquals(path, archiveFile) || pathStartsWith(path, archiveFile))) {
       // Directory (or prefix): preserve the final path component under install_to.
-      const slash = file.lastIndexOf("/");
-      return slash === -1 ? "" : file.slice(0, slash);
+      const slash = archiveFile.lastIndexOf("/");
+      return slash === -1 ? "" : archiveFile.slice(0, slash);
     }
   }
   if (stanza.find !== undefined) {
-    const needle = stanza.find.replaceAll("\\", "/");
+    const needle = normalizeSlashPath(stanza.find.replaceAll("\\", "/"));
+    const needleParts = needle.split("/");
     for (const path of matched) {
       const parts = path.split("/");
-      const index = parts.indexOf(needle);
-      if (index >= 0) {
-        // Parent of the found directory so the directory name is preserved under install_to.
-        return parts.slice(0, index).join("/");
+      for (let index = 0; index <= parts.length - needleParts.length; index += 1) {
+        const candidate = parts.slice(index, index + needleParts.length);
+        if (candidate.every((part, offset) => part.toLowerCase() === needleParts[offset]!.toLowerCase())) {
+          // Parent of the found directory so the directory name is preserved under install_to.
+          return parts.slice(0, index).join("/");
+        }
       }
     }
   }
+  return sharedDirectoryPrefix(matched);
+}
+
+/** Return the archive path prefix that case-insensitively equals `target`, if present. */
+function archivePrefixForTarget(path: string, target: string): string | undefined {
+  const pathParts = path.split("/");
+  const targetParts = normalizeSlashPath(target).split("/");
+  if (pathParts.length < targetParts.length) {
+    return undefined;
+  }
+  const prefixParts = pathParts.slice(0, targetParts.length);
+  if (!prefixParts.every((part, index) => part.toLowerCase() === targetParts[index]!.toLowerCase())) {
+    return undefined;
+  }
+  return prefixParts.join("/");
+}
+
+function sharedDirectoryPrefix(matched: readonly string[]): string {
   const first = matched[0]!;
   let prefix = first.includes("/") ? first.slice(0, first.lastIndexOf("/")) : "";
   for (const path of matched.slice(1)) {
-    while (prefix.length > 0 && path !== prefix && !path.startsWith(`${prefix}/`)) {
+    while (prefix.length > 0 && !pathEquals(path, prefix) && !pathStartsWith(path, prefix)) {
       const slash = prefix.lastIndexOf("/");
       prefix = slash === -1 ? "" : prefix.slice(0, slash);
     }

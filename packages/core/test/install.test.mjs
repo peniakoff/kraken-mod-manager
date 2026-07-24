@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildInventory,
+  findAvailableUpdates,
   isAllowedDestination,
   isSafeArchivePath,
   resolveInstallMappings,
@@ -61,6 +62,52 @@ test("find stanza locates a named directory in the archive", () => {
   ]);
 });
 
+test("file stanza matches archive paths case-insensitively", () => {
+  const mappings = resolveInstallMappings(
+    { install: [{ file: "GameData/Example", installTo: "GameData" }] },
+    ["gamedata/Example/a.cfg", "gamedata/Example/b.dll"],
+  );
+  assert.deepEqual(mappings, [
+    { sourcePath: "gamedata/Example/a.cfg", destinationPath: "GameData/Example/a.cfg" },
+    { sourcePath: "gamedata/Example/b.dll", destinationPath: "GameData/Example/b.dll" },
+  ]);
+});
+
+test("find stanza matches directory names case-insensitively", () => {
+  const mappings = resolveInstallMappings(
+    { install: [{ find: "ExampleMod", installTo: "GameData" }] },
+    ["Pack/examplemod/Parts/wing.cfg", "Pack/examplemod/plugin.dll"],
+  );
+  assert.deepEqual(mappings, [
+    { sourcePath: "Pack/examplemod/Parts/wing.cfg", destinationPath: "GameData/examplemod/Parts/wing.cfg" },
+    { sourcePath: "Pack/examplemod/plugin.dll", destinationPath: "GameData/examplemod/plugin.dll" },
+  ]);
+});
+
+test("find_regexp matches archive paths case-insensitively", () => {
+  const mappings = resolveInstallMappings(
+    { install: [{ findRegexp: "gamedata/example/.*\\.dll$", installTo: "GameData" }] },
+    ["GameData/Example/plugin.DLL", "GameData/Example/readme.txt"],
+  );
+  assert.deepEqual(mappings, [
+    { sourcePath: "GameData/Example/plugin.DLL", destinationPath: "GameData/plugin.DLL" },
+  ]);
+});
+
+test("throws STANZA_NOT_FOUND with stanza description when nothing matches", () => {
+  assert.throws(
+    () =>
+      resolveInstallMappings(
+        { install: [{ file: "GameData/Missing", installTo: "GameData" }] },
+        ["GameData/Other/a.cfg"],
+      ),
+    (error) =>
+      error instanceof InstallPolicyError &&
+      error.code === "STANZA_NOT_FOUND" &&
+      error.message.includes('file="GameData/Missing"'),
+  );
+});
+
 test("rejects path traversal in archive entries", () => {
   assert.throws(
     () => resolveInstallMappings({}, ["GameData/../evil.dll"]),
@@ -104,4 +151,47 @@ test("verifies download hashes", () => {
     (error) => error instanceof InstallPolicyError && error.code === "HASH_MISMATCH",
   );
   verifyDownloadHash(new Uint8Array(), { sha256: "abc" }, { sha256: "ABC" });
+});
+
+test("findAvailableUpdates reports newer registry versions only", () => {
+  const updates = findAvailableUpdates(
+    [
+      { identifier: "MechJeb2", name: "MechJeb 2", version: "2.14.0", status: "managed" },
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+      { identifier: "DetectedOnly", status: "detected" },
+      { identifier: "UnknownMod", version: "1.0.0", status: "managed" },
+    ],
+    [
+      {
+        identifier: "MechJeb2",
+        name: "MechJeb 2",
+        authors: ["sarbian"],
+        version: "2.14.0",
+        tags: ["plugin"],
+      },
+      {
+        identifier: "MechJeb2",
+        name: "MechJeb 2",
+        authors: ["sarbian"],
+        version: "2.15.0",
+        tags: ["plugin"],
+      },
+      {
+        identifier: "ModuleManager",
+        name: "Module Manager",
+        authors: ["sarbian"],
+        version: "4.2.3",
+        tags: ["plugin"],
+      },
+    ],
+  );
+
+  assert.deepEqual(updates, [
+    {
+      identifier: "MechJeb2",
+      name: "MechJeb 2",
+      installedVersion: "2.14.0",
+      availableVersion: "2.15.0",
+    },
+  ]);
 });
