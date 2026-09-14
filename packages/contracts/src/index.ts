@@ -106,10 +106,32 @@ export const ckanRelationshipsSchema = z.object({
 
 export type CkanRelationships = z.infer<typeof ckanRelationshipsSchema>;
 
+export const resourceUrlSchema = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine((url) => /^https?:\/\//i.test(url), {
+    message: "Resource URL must use http or https scheme",
+  });
+
+export const ckanResourcesSchema = z.object({
+  homepage: resourceUrlSchema.optional(),
+  repository: resourceUrlSchema.optional(),
+  bugtracker: resourceUrlSchema.optional(),
+  spacedock: resourceUrlSchema.optional(),
+  curse: resourceUrlSchema.optional(),
+  manual: resourceUrlSchema.optional(),
+  metanet: resourceUrlSchema.optional(),
+});
+
+export type CkanResources = z.infer<typeof ckanResourcesSchema>;
+
 export const ckanModuleSchema = z.object({
   identifier: z.string().min(1),
   name: z.string().min(1),
   abstract: z.string().optional(),
+  description: z.string().optional(),
+  license: z.string().optional(),
   authors: z.array(z.string().min(1)),
   version: z.string().min(1),
   kspVersion: z.string().min(1).optional(),
@@ -121,6 +143,7 @@ export const ckanModuleSchema = z.object({
   downloadHash: ckanDownloadHashSchema.optional(),
   install: z.array(ckanInstallStanzaSchema).optional(),
   relationships: ckanRelationshipsSchema.optional(),
+  resources: ckanResourcesSchema.optional(),
 });
 
 export type CkanModule = z.infer<typeof ckanModuleSchema>;
@@ -141,6 +164,19 @@ export const modsResponseSchema = z.object({
 });
 
 export type ModsResponse = z.infer<typeof modsResponseSchema>;
+
+export const modDetailsResponseSchema = z.object({
+  mod: ckanModuleSchema,
+});
+
+export type ModDetailsResponse = z.infer<typeof modDetailsResponseSchema>;
+
+export const modVersionsResponseSchema = z.object({
+  identifier: z.string().min(1),
+  versions: z.array(ckanModuleSchema),
+});
+
+export type ModVersionsResponse = z.infer<typeof modVersionsResponseSchema>;
 
 export const installedModStatusSchema = z.enum(["managed", "detected"]);
 

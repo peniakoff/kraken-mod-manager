@@ -297,4 +297,82 @@ describe("App", () => {
       expect(latest.searchParams.has("compatibleWith")).toBe(false);
     });
   });
+
+  it("opens and closes mod details panel from browse view", async () => {
+    const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+    const modItem = {
+      identifier: "ModuleManager",
+      name: "Module Manager",
+      authors: ["sarbian"],
+      version: "4.2.3",
+      tags: ["plugin"],
+      abstract: "Patching plugin",
+      description: "Full description of Module Manager",
+      download: "https://example.test/mm.zip",
+      resources: {
+        homepage: "https://example.test/mm-home",
+      },
+    };
+
+    const fetchMock = vi.fn().mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/v1/health") {
+        return json({ status: "ok", version: "test-version" });
+      }
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") {
+        return json({ status: "ready", moduleCount: 1, updatedAt: "2026-07-17T12:00:00.000Z" });
+      }
+      if (url === "/api/v1/installed-mods") {
+        return json({ mods: [] });
+      }
+      if (url === "/api/v1/updates") {
+        return json({ updates: [] });
+      }
+      if (url.startsWith("/api/v1/mods/ModuleManager/versions")) {
+        return json({ identifier: "ModuleManager", versions: [modItem] });
+      }
+      if (url.startsWith("/api/v1/mods/ModuleManager")) {
+        return json({ mod: modItem });
+      }
+      if (url.startsWith("/api/v1/mods")) {
+        return json({ total: 1, mods: [modItem] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain("Active installation");
+    });
+
+    const browseButton = wrapper.findAll("button").find((button) => button.text() === "Browse mods");
+    await browseButton!.trigger("click");
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain("Module Manager");
+    });
+
+    const detailsBtn = wrapper.find('[data-testid="mod-details-btn"]');
+    expect(detailsBtn.exists()).toBe(true);
+    await detailsBtn.trigger("click");
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="mod-details-panel"]').exists()).toBe(true);
+      expect(wrapper.text()).toContain("Full description of Module Manager");
+      expect(wrapper.find('[data-testid="resource-link-homepage"]').exists()).toBe(true);
+    });
+
+    const closeBtn = wrapper.find('[data-testid="close-details-btn"]');
+    await closeBtn.trigger("click");
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="mod-details-panel"]').exists()).toBe(false);
+    });
+  });
 });

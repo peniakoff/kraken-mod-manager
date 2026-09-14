@@ -11,6 +11,7 @@ import type {
 import ModFilterBar from "./ModFilterBar.vue";
 import ModPagination from "./ModPagination.vue";
 import ModTable from "./ModTable.vue";
+import ModDetailsPanel from "./ModDetailsPanel.vue";
 
 const props = defineProps<{
   registry?: RegistryResponse;
@@ -31,6 +32,9 @@ const props = defineProps<{
   kspVersion?: string;
   pageSize: number;
   currentPage: number;
+  selectedMod?: CkanModule;
+  selectedModVersions?: CkanModule[];
+  isLoadingVersions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -45,6 +49,8 @@ const emit = defineEmits<{
   uninstall: [mod: InstalledMod];
   confirmDependencyInstall: [];
   cancelDependencyInstall: [];
+  selectMod: [mod: CkanModule | undefined];
+  selectVersion: [mod: CkanModule];
 }>();
 
 const missingDependencies = computed(() => {
@@ -157,6 +163,7 @@ function progressLabel(event: JobProgressEvent | undefined): string {
           :available-updates="availableUpdates"
           :installing-identifier="installingIdentifier"
           @install="emit('install', $event)"
+          @select="emit('selectMod', $event)"
         />
         <ModPagination
           :total="searchTotal"
@@ -205,5 +212,21 @@ function progressLabel(event: JobProgressEvent | undefined): string {
         </div>
       </div>
     </div>
+
+    <ModDetailsPanel
+      v-if="selectedMod !== undefined"
+      :mod="selectedMod"
+      :versions="selectedModVersions ?? [selectedMod]"
+      :ksp-version="kspVersion"
+      :installed-mods="installedMods"
+      :available-updates="availableUpdates"
+      :installing-identifier="installingIdentifier"
+      :uninstalling-identifier="uninstallingIdentifier"
+      :is-loading-versions="isLoadingVersions"
+      @close="emit('selectMod', undefined)"
+      @install="emit('install', $event)"
+      @uninstall="emit('uninstall', $event)"
+      @select-version="emit('selectVersion', $event)"
+    />
   </div>
 </template>

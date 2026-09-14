@@ -16,6 +16,8 @@ import {
   getHealth,
   getInstallations,
   getInstalledMods,
+  getModDetails,
+  getModVersions,
   getRegistry,
   getUpdates,
   installMod,
@@ -61,6 +63,9 @@ const installingIdentifier = ref<string>();
 const uninstallingIdentifier = ref<string>();
 const jobProgress = ref<JobProgressEvent>();
 const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse }>();
+const selectedMod = ref<CkanModule>();
+const selectedModVersions = ref<CkanModule[]>([]);
+const isLoadingVersions = ref(false);
 let stopWatchingJob: (() => void) | undefined;
 
 const effectiveTag = computed(() => {
@@ -94,6 +99,8 @@ async function loadSetup(): Promise<void> {
       searchTotal.value = 0;
       installedMods.value = [];
       availableUpdates.value = [];
+      selectedMod.value = undefined;
+      selectedModVersions.value = [];
     }
     status.value = "ready";
   } catch (error) {
@@ -227,6 +234,43 @@ function onUpdateModPage(page: number): void {
   }
   currentPage.value = page;
   void runSearch();
+}
+
+let selectModRequestId = 0;
+
+async function onSelectMod(mod: CkanModule | undefined): Promise<void> {
+  const currentRequestId = ++selectModRequestId;
+  selectedMod.value = mod;
+
+  if (mod === undefined) {
+    selectedModVersions.value = [];
+    isLoadingVersions.value = false;
+    return;
+  }
+
+  isLoadingVersions.value = true;
+  try {
+    const versionsResult = await getModVersions(mod.identifier).catch(() => undefined);
+    if (selectModRequestId !== currentRequestId) {
+      return;
+    }
+    if (versionsResult !== undefined && versionsResult.versions.length > 0) {
+      selectedModVersions.value = versionsResult.versions;
+      const currentVersion = selectedMod.value?.version;
+      const matched = versionsResult.versions.find((v) => v.version === currentVersion);
+      selectedMod.value = matched ?? versionsResult.versions[0];
+    } else {
+      selectedModVersions.value = [mod];
+    }
+  } finally {
+    if (selectModRequestId === currentRequestId) {
+      isLoadingVersions.value = false;
+    }
+  }
+}
+
+function onSelectModVersion(versionMod: CkanModule): void {
+  selectedMod.value = versionMod;
 }
 
 async function onInstall(mod: CkanModule): Promise<void> {
@@ -400,9 +444,14 @@ onUnmounted(() => {
       :ksp-version="installation.version"
       :page-size="pageSize"
       :current-page="currentPage"
+      :selected-mod="selectedMod"
+      :selected-mod-versions="selectedModVersions"
+      :is-loading-versions="isLoadingVersions"
       @refresh-registry="onRefreshRegistry"
       @install="onInstall"
       @uninstall="onUninstall"
+      @select-mod="onSelectMod"
+      @select-version="onSelectModVersion"
       @update:page="onUpdateModPage"
       @reset-filters="resetModFilters"
       @confirm-dependency-install="confirmDependencyInstall"

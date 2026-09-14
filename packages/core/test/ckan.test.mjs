@@ -276,3 +276,108 @@ test("refreshRegistry downloads, extracts, and parses modules", async () => {
   assert.equal(snapshot.parseErrors, 0);
   assert.equal(snapshot.updatedAt, "2026-07-17T12:00:00.000Z");
 });
+
+test("parses description, license and resources with defensive fallbacks", () => {
+  const module = parseCkanDocument({
+    identifier: "DeepSpace",
+    name: "Deep Space",
+    author: "Explorer",
+    version: "1.2.0",
+    description: "A great description for exploring deep space.",
+    license: ["GPL-3.0", "CC-BY-NC"],
+    resources: {
+      homepage: "https://example.test/home",
+      repository: "https://github.com/example/deepspace",
+      bugtracker: "https://github.com/example/deepspace/issues",
+      spacedock: "https://spacedock.info/mod/123",
+      invalid_url: 12345,
+    },
+    tags: ["parts"],
+  });
+
+  assert.equal(module?.description, "A great description for exploring deep space.");
+  assert.equal(module?.license, "GPL-3.0, CC-BY-NC");
+  assert.deepEqual(module?.resources, {
+    homepage: "https://example.test/home",
+    repository: "https://github.com/example/deepspace",
+    bugtracker: "https://github.com/example/deepspace/issues",
+    spacedock: "https://spacedock.info/mod/123",
+  });
+
+  // Single string license
+  const singleLic = parseCkanDocument({
+    identifier: "DeepSpace2",
+    name: "Deep Space 2",
+    author: "Explorer",
+    version: "1.0.0",
+    license: "MIT",
+    tags: [],
+  });
+  assert.equal(singleLic?.license, "MIT");
+
+  // Empty resources
+  const emptyRes = parseCkanDocument({
+    identifier: "DeepSpace3",
+    name: "Deep Space 3",
+    author: "Explorer",
+    version: "1.0.0",
+    resources: {},
+    tags: [],
+  });
+  assert.equal(emptyRes?.resources, undefined);
+});
+
+test("CkanIndex lists versions sorted desc and gets latest", () => {
+  const modules = [
+    {
+      identifier: "MechJeb2",
+      name: "MechJeb 2",
+      authors: ["r4mida", "Sarbian"],
+      version: "2.14.0",
+      tags: ["control"],
+    },
+    {
+      identifier: "MechJeb2",
+      name: "MechJeb 2",
+      authors: ["r4mida", "Sarbian"],
+      version: "2.15.0",
+      description: "An autopilot mod for KSP",
+      tags: ["control"],
+    },
+    {
+      identifier: "MechJeb2",
+      name: "MechJeb 2",
+      authors: ["r4mida", "Sarbian"],
+      version: "1:2.12.0",
+      description: "An autopilot mod for KSP",
+      tags: ["control"],
+    },
+  ];
+
+  const index = new CkanIndex(modules);
+
+  // Versions sorted descending: epoch 1:2.12.0 is newest, then 2.15.0, then 2.14.0
+  const versions = index.listVersions("MechJeb2");
+  assert.deepEqual(
+    versions.map((m) => m.version),
+    ["1:2.12.0", "2.15.0", "2.14.0"],
+  );
+
+  // Case-insensitive lookup
+  const versionsLower = index.listVersions("mechjeb2");
+  assert.equal(versionsLower.length, 3);
+
+  // getLatest
+  const latest = index.getLatest("MechJeb2");
+  assert.equal(latest?.version, "1:2.12.0");
+
+  const latestLower = index.getLatest("mechjeb2");
+  assert.equal(latestLower?.version, "1:2.12.0");
+
+  assert.equal(index.getLatest("NonExistent"), undefined);
+
+  // Search by description query
+  const searchDesc = index.search({ query: "autopilot" });
+  assert.equal(searchDesc.total, 1);
+  assert.equal(searchDesc.mods[0]?.identifier, "MechJeb2");
+});

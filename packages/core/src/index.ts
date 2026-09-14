@@ -18,6 +18,7 @@ export {
   type CkanModule,
   type CkanRelationship,
   type CkanRelationships,
+  type CkanResources,
   type CkanSearchOptions,
   type CkanSearchResult,
   type HttpPort,

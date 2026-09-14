@@ -9,6 +9,8 @@ import {
   installedModsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  modDetailsResponseSchema,
+  modVersionsResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
   registryResponseSchema,
@@ -121,4 +123,35 @@ test("applies mods query defaults and rejects invalid limits", () => {
   assert.equal(modsQuerySchema.parse({ q: "mech", limit: "10", offset: "5" }).limit, 10);
   assert.equal(modsQuerySchema.safeParse({ limit: 0 }).success, false);
   assert.equal(modsQuerySchema.safeParse({ limit: 201 }).success, false);
+});
+
+test("accepts mod details and mod versions responses with resources, description and license", () => {
+  const modData = {
+    identifier: "ModuleManager",
+    name: "Module Manager",
+    abstract: "Modifies game configs",
+    description: "Detailed description of Module Manager and what it does.",
+    license: "CC-BY-SA",
+    authors: ["sarbian", "ialdabaoth"],
+    version: "4.2.3",
+    tags: ["plugin"],
+    resources: {
+      homepage: "https://forum.kerbalspaceprogram.com/topic/50533-module-manager/",
+      repository: "https://github.com/sarbian/ModuleManager",
+      bugtracker: "https://github.com/sarbian/ModuleManager/issues",
+    },
+  };
+
+  const details = modDetailsResponseSchema.parse({ mod: modData });
+  assert.equal(details.mod.identifier, "ModuleManager");
+  assert.equal(details.mod.description, "Detailed description of Module Manager and what it does.");
+  assert.equal(details.mod.license, "CC-BY-SA");
+  assert.equal(details.mod.resources?.homepage, "https://forum.kerbalspaceprogram.com/topic/50533-module-manager/");
+
+  const versions = modVersionsResponseSchema.parse({
+    identifier: "ModuleManager",
+    versions: [modData, { ...modData, version: "4.2.2" }],
+  });
+  assert.equal(versions.identifier, "ModuleManager");
+  assert.equal(versions.versions.length, 2);
 });

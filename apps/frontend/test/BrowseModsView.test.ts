@@ -84,4 +84,23 @@ describe("BrowseModsView mod browser", () => {
     await resetButton!.trigger("click");
     expect(wrapper.emitted("resetFilters")).toEqual([[]]);
   });
+
+  it("emits selectMod when Details button is clicked and renders panel when selectedMod is set", async () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps } });
+
+    const detailsButtons = wrapper.findAll('[data-testid="mod-details-btn"]');
+    expect(detailsButtons.length).toBeGreaterThan(0);
+    await detailsButtons[0]!.trigger("click");
+    expect(wrapper.emitted("selectMod")).toEqual([[baseProps.searchResults[0]]]);
+
+    // Renders panel when selectedMod is provided
+    const wrapperWithSelected = mount(BrowseModsView, {
+      props: {
+        ...baseProps,
+        selectedMod: baseProps.searchResults[0],
+        selectedModVersions: [baseProps.searchResults[0]],
+      },
+    });
+    expect(wrapperWithSelected.find('[data-testid="mod-details-panel"]').exists()).toBe(true);
+  });
 });

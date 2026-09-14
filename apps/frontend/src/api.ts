@@ -9,6 +9,8 @@ import {
   installationsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  modDetailsResponseSchema,
+  modVersionsResponseSchema,
   modsResponseSchema,
   registryResponseSchema,
   type ConfigResponse,
@@ -20,6 +22,8 @@ import {
   type InstallationsResponse,
   type JobProgressEvent,
   type JobResponse,
+  type ModDetailsResponse,
+  type ModVersionsResponse,
   type ModsResponse,
   type RegistryResponse,
   type UpdatesResponse,
@@ -90,6 +94,14 @@ export async function searchMods(options: {
   }
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return request(`/api/v1/mods${query}`, modsResponseSchema);
+}
+
+export async function getModDetails(identifier: string): Promise<ModDetailsResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}`, modDetailsResponseSchema);
+}
+
+export async function getModVersions(identifier: string): Promise<ModVersionsResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/versions`, modVersionsResponseSchema);
 }
 
 export async function getInstalledMods(): Promise<InstalledModsResponse> {
