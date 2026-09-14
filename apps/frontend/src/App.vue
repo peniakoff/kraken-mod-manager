@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type {
   AvailableUpdate,
   CkanModule,
@@ -30,6 +30,7 @@ import AppShell from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
 import DashboardView from "./components/DashboardView.vue";
 import SetupView from "./components/SetupView.vue";
+import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 
 type AppView = "dashboard" | "browse";
 
@@ -45,6 +46,11 @@ const activeView = ref<AppView>("dashboard");
 const registry = ref<RegistryResponse>();
 const isRefreshingRegistry = ref(false);
 const searchQuery = ref("");
+const selectedTag = ref("");
+const customTag = ref("");
+const compatibleOnly = ref(true);
+const currentPage = ref(0);
+const pageSize = MOD_BROWSER_PAGE_SIZE;
 const searchResults = ref<CkanModule[]>([]);
 const searchTotal = ref(0);
 const isSearching = ref(false);
@@ -56,6 +62,16 @@ const uninstallingIdentifier = ref<string>();
 const jobProgress = ref<JobProgressEvent>();
 const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse }>();
 let stopWatchingJob: (() => void) | undefined;
+
+const effectiveTag = computed(() => {
+  // A typed custom tag takes precedence over the selected preset.
+  const custom = customTag.value.trim();
+  if (custom.length > 0) {
+    return custom;
+  }
+  const selected = selectedTag.value.trim();
+  return selected.length > 0 ? selected : undefined;
+});
 
 async function loadSetup(): Promise<void> {
   status.value = "checking";
@@ -87,6 +103,7 @@ async function loadSetup(): Promise<void> {
 }
 
 async function loadConfiguredState(active: KspInstallation): Promise<void> {
+  currentPage.value = 0;
   registry.value = await getRegistry();
   await loadInstalledMods();
   await loadUpdates();
@@ -153,6 +170,7 @@ async function onRefreshRegistry(): Promise<void> {
   }
   isRefreshingRegistry.value = true;
   errorMessage.value = undefined;
+  currentPage.value = 0;
   try {
     registry.value = await refreshRegistry();
     await runSearch(installation.value);
@@ -175,9 +193,10 @@ async function runSearch(active?: KspInstallation): Promise<void> {
   try {
     const result = await searchMods({
       q: searchQuery.value.trim() || undefined,
-      compatibleWith: target.version,
-      limit: 50,
-      offset: 0,
+      tag: effectiveTag.value,
+      compatibleWith: compatibleOnly.value ? target.version : undefined,
+      limit: pageSize,
+      offset: currentPage.value * pageSize,
     });
     searchResults.value = result.mods;
     searchTotal.value = result.total;
@@ -187,6 +206,27 @@ async function runSearch(active?: KspInstallation): Promise<void> {
   } finally {
     isSearching.value = false;
   }
+}
+
+function resetModFilters(): void {
+  // Changing a filter already schedules a debounced search via watcher,
+  // so only search immediately when nothing changed (e.g. page reset).
+  const filtersChanged = selectedTag.value !== "" || customTag.value !== "" || compatibleOnly.value !== true;
+  selectedTag.value = "";
+  customTag.value = "";
+  compatibleOnly.value = true;
+  currentPage.value = 0;
+  if (!filtersChanged && installation.value !== undefined && registry.value?.status === "ready") {
+    void runSearch();
+  }
+}
+
+function onUpdateModPage(page: number): void {
+  if (page < 0) {
+    return;
+  }
+  currentPage.value = page;
+  void runSearch();
 }
 
 async function onInstall(mod: CkanModule): Promise<void> {
@@ -286,7 +326,7 @@ async function onUninstall(mod: InstalledMod): Promise<void> {
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
-watch(searchQuery, () => {
+function scheduleSearch(): void {
   if (installation.value === undefined || registry.value?.status !== "ready") {
     return;
   }
@@ -294,9 +334,12 @@ watch(searchQuery, () => {
     clearTimeout(searchTimer);
   }
   searchTimer = setTimeout(() => {
+    currentPage.value = 0;
     void runSearch();
   }, 250);
-});
+}
+watch(searchQuery, scheduleSearch);
+watch([selectedTag, customTag, compatibleOnly], scheduleSearch);
 
 onMounted(loadSetup);
 onUnmounted(() => {
@@ -340,19 +383,28 @@ onUnmounted(() => {
     <BrowseModsView
       v-else
       v-model:search-query="searchQuery"
+      v-model:selected-tag="selectedTag"
+      v-model:custom-tag="customTag"
+      v-model:compatible-only="compatibleOnly"
       :registry="registry"
       :is-refreshing-registry="isRefreshingRegistry"
       :search-results="searchResults"
       :search-total="searchTotal"
       :is-searching="isSearching"
       :installed-mods="installedMods"
+      :available-updates="availableUpdates"
       :installing-identifier="installingIdentifier"
       :uninstalling-identifier="uninstallingIdentifier"
       :job-progress="jobProgress"
       :dependency-prompt="dependencyPrompt"
+      :ksp-version="installation.version"
+      :page-size="pageSize"
+      :current-page="currentPage"
       @refresh-registry="onRefreshRegistry"
       @install="onInstall"
       @uninstall="onUninstall"
+      @update:page="onUpdateModPage"
+      @reset-filters="resetModFilters"
       @confirm-dependency-install="confirmDependencyInstall"
       @cancel-dependency-install="cancelDependencyInstall"
     />

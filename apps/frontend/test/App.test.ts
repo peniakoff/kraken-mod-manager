@@ -180,4 +180,121 @@ describe("App", () => {
       expect(wrapper.text()).toMatch(/Installed mods\s*1/);
     });
   });
+
+  it("sends tag filter and pagination offsets to the mods endpoint", async () => {
+    const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+    const installation = { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" };
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/v1/health") {
+        return json({ status: "ok", version: "test-version" });
+      }
+      if (url === "/api/v1/config") {
+        return json({ configured: true, installation });
+      }
+      if (url === "/api/v1/registry") {
+        return json({ status: "ready", moduleCount: 30 });
+      }
+      if (url === "/api/v1/installed-mods") {
+        return json({ mods: [] });
+      }
+      if (url === "/api/v1/updates") {
+        return json({ updates: [] });
+      }
+      if (url.startsWith("/api/v1/mods")) {
+        return json({ total: 30, mods: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain("Active installation");
+    });
+
+    const browseButton = wrapper.findAll("button").find((button) => button.text() === "Browse mods");
+    await browseButton!.trigger("click");
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain("Category:");
+    });
+
+    const modsCalls = () =>
+      fetchMock.mock.calls.map((call) => String(call[0])).filter((url) => url.startsWith("/api/v1/mods"));
+    await vi.waitFor(() => {
+      expect(modsCalls().length).toBeGreaterThan(0);
+    });
+    const initialUrl = new URL(modsCalls()[0]!, "http://localhost");
+    expect(initialUrl.searchParams.get("limit")).toBe("25");
+    expect(initialUrl.searchParams.get("offset")).toBe("0");
+    expect(initialUrl.searchParams.get("compatibleWith")).toBe("1.12.5");
+
+    await wrapper.find("#mod-tag").setValue("parts");
+    await vi.waitFor(() => {
+      expect(modsCalls().some((url) => new URL(url, "http://localhost").searchParams.get("tag") === "parts")).toBe(
+        true,
+      );
+    });
+
+    const nextButton = wrapper.findAll("button").find((button) => button.text() === "Next");
+    expect(nextButton).toBeDefined();
+    await nextButton!.trigger("click");
+    await vi.waitFor(() => {
+      expect(
+        modsCalls().some((url) => {
+          const params = new URL(url, "http://localhost").searchParams;
+          return params.get("offset") === "25" && params.get("tag") === "parts";
+        }),
+      ).toBe(true);
+    });
+  });
+
+  it("omits the compatibility filter when compatible-only is disabled", async () => {
+    const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+    const installation = { path: "/games/KSP", platform: "linux", source: "steam", version: "1.12.5" };
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/v1/health") {
+        return json({ status: "ok", version: "test-version" });
+      }
+      if (url === "/api/v1/config") {
+        return json({ configured: true, installation });
+      }
+      if (url === "/api/v1/registry") {
+        return json({ status: "ready", moduleCount: 2 });
+      }
+      if (url === "/api/v1/installed-mods") {
+        return json({ mods: [] });
+      }
+      if (url === "/api/v1/updates") {
+        return json({ updates: [] });
+      }
+      if (url.startsWith("/api/v1/mods")) {
+        return json({ total: 0, mods: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain("Active installation");
+    });
+
+    const browseButton = wrapper.findAll("button").find((button) => button.text() === "Browse mods");
+    await browseButton!.trigger("click");
+    await vi.waitFor(() => {
+      expect(wrapper.find("#compatible-only").exists()).toBe(true);
+    });
+
+    await wrapper.find("#compatible-only").setValue(false);
+    await vi.waitFor(() => {
+      const modsCalls = fetchMock.mock.calls
+        .map((call) => String(call[0]))
+        .filter((url) => url.startsWith("/api/v1/mods"));
+      expect(modsCalls.length).toBeGreaterThan(1);
+      const latest = new URL(modsCalls[modsCalls.length - 1]!, "http://localhost");
+      expect(latest.searchParams.has("compatibleWith")).toBe(false);
+    });
+  });
 });
