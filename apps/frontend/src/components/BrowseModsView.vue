@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type {
+  AvailableUpdate,
   CkanModule,
   InstallPlanResponse,
   InstalledMod,
   JobProgressEvent,
   RegistryResponse,
 } from "@kraken/contracts";
+import ModFilterBar from "./ModFilterBar.vue";
+import ModPagination from "./ModPagination.vue";
+import ModTable from "./ModTable.vue";
 
 const props = defineProps<{
   registry?: RegistryResponse;
@@ -16,14 +20,26 @@ const props = defineProps<{
   searchTotal: number;
   isSearching: boolean;
   installedMods: InstalledMod[];
+  availableUpdates: AvailableUpdate[];
   installingIdentifier?: string;
   uninstallingIdentifier?: string;
   jobProgress?: JobProgressEvent;
   dependencyPrompt?: { mod: CkanModule; plan: InstallPlanResponse };
+  selectedTag: string;
+  customTag: string;
+  compatibleOnly: boolean;
+  kspVersion?: string;
+  pageSize: number;
+  currentPage: number;
 }>();
 
 const emit = defineEmits<{
   "update:searchQuery": [value: string];
+  "update:selectedTag": [value: string];
+  "update:customTag": [value: string];
+  "update:compatibleOnly": [value: boolean];
+  "update:page": [page: number];
+  resetFilters: [];
   refreshRegistry: [];
   install: [mod: CkanModule];
   uninstall: [mod: InstalledMod];
@@ -38,6 +54,8 @@ const missingDependencies = computed(() => {
   }
   return prompt.plan.toInstall.filter((entry) => entry.identifier !== prompt.mod.identifier);
 });
+
+const offset = computed(() => props.currentPage * props.pageSize);
 
 function progressLabel(event: JobProgressEvent | undefined): string {
   if (event === undefined) {
@@ -116,34 +134,37 @@ function progressLabel(event: JobProgressEvent | undefined): string {
           :value="searchQuery"
           @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
         />
+        <ModFilterBar
+          :selected-tag="selectedTag"
+          :custom-tag="customTag"
+          :compatible-only="compatibleOnly"
+          :ksp-version="kspVersion"
+          :disabled="isSearching || isRefreshingRegistry"
+          @update:selected-tag="emit('update:selectedTag', $event)"
+          @update:custom-tag="emit('update:customTag', $event)"
+          @update:compatible-only="emit('update:compatibleOnly', $event)"
+          @reset-filters="emit('resetFilters')"
+        />
         <p class="mt-2 text-sm text-slate-400">
           <span v-if="isSearching">Searching…</span>
           <span v-else>{{ searchTotal }} result{{ searchTotal === 1 ? "" : "s" }}</span>
         </p>
-        <ul class="mt-3 max-h-80 space-y-3 overflow-y-auto">
-          <li
-            v-for="mod in searchResults"
-            :key="`${mod.identifier}@${mod.version}`"
-            class="rounded-lg border border-slate-700 p-3"
-          >
-            <p class="font-semibold">
-              {{ mod.name }} <span class="font-mono text-sm text-slate-400">{{ mod.version }}</span>
-            </p>
-            <p class="mt-1 text-sm text-slate-400">
-              {{ mod.identifier }} · {{ mod.authors.join(", ") || "Unknown author" }}
-            </p>
-            <p v-if="mod.abstract" class="mt-2 line-clamp-2 text-sm text-slate-300">{{ mod.abstract }}</p>
-            <button
-              v-if="mod.download !== undefined"
-              class="mt-3 rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
-              type="button"
-              :disabled="installingIdentifier === mod.identifier"
-              @click="emit('install', mod)"
-            >
-              {{ installingIdentifier === mod.identifier ? "Installing…" : "Install" }}
-            </button>
-          </li>
-        </ul>
+        <ModTable
+          :mods="searchResults"
+          :ksp-version="kspVersion"
+          :compatible-only="compatibleOnly"
+          :installed-mods="installedMods"
+          :available-updates="availableUpdates"
+          :installing-identifier="installingIdentifier"
+          @install="emit('install', $event)"
+        />
+        <ModPagination
+          :total="searchTotal"
+          :limit="pageSize"
+          :offset="offset"
+          :disabled="isSearching || isRefreshingRegistry"
+          @update:page="emit('update:page', $event)"
+        />
       </div>
     </section>
 
