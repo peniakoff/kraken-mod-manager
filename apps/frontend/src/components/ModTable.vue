@@ -9,7 +9,7 @@ const props = defineProps<{
   compatibleOnly: boolean;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifier?: string;
+  installingIdentifiers: string[];
 }>();
 
 const emit = defineEmits<{
@@ -90,10 +90,10 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
             v-if="mod.download !== undefined"
             class="rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
             type="button"
-            :disabled="installingIdentifier === mod.identifier"
+            :disabled="installingIdentifiers.includes(mod.identifier)"
             @click="emit('install', mod)"
           >
-            {{ installingIdentifier === mod.identifier ? "Installing…" : "Install" }}
+            {{ installingIdentifiers.includes(mod.identifier) ? "Installing…" : "Install" }}
           </button>
           <button
             class="rounded-md border border-slate-600 px-3 py-1 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-slate-100"

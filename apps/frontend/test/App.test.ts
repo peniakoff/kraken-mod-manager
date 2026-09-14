@@ -2,9 +2,133 @@ import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  readonly url: string;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    MockEventSource.instances.push(this);
+  }
+
+  emit(data: unknown): void {
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(data) }));
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
 describe("App", () => {
   afterEach(() => {
+    MockEventSource.instances = [];
     vi.unstubAllGlobals();
+  });
+
+  it("keeps an install visible through navigation and handles its terminal SSE event", async () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const mod = {
+      identifier: "ModuleManager",
+      name: "Module Manager",
+      authors: ["sarbian"],
+      version: "4.2.3",
+      tags: ["plugin"],
+      download: "https://example.test/mm.zip",
+    };
+    let installedLoads = 0;
+    let updateLoads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 1 });
+      if (url === "/api/v1/installed-mods") {
+        installedLoads += 1;
+        return json({
+          mods: installedLoads > 1
+            ? [{ identifier: mod.identifier, name: mod.name, version: mod.version, status: "managed" }]
+            : [],
+        });
+      }
+      if (url === "/api/v1/updates") {
+        updateLoads += 1;
+        return json({ updates: [] });
+      }
+      if (url === "/api/v1/mods/ModuleManager/plan") {
+        return json({
+          status: "ok",
+          target: { identifier: mod.identifier, name: mod.name, version: mod.version },
+          toInstall: [{ identifier: mod.identifier, name: mod.name, version: mod.version }],
+          alreadySatisfied: [],
+          conflicts: [],
+          unmet: [],
+          optional: [],
+        });
+      }
+      if (url === "/api/v1/mods/ModuleManager/install" && init?.method === "POST") {
+        return json({
+          job: {
+            jobId: "job-1",
+            kind: "install",
+            identifier: mod.identifier,
+            version: mod.version,
+            status: "queued",
+            phase: "queued",
+            message: "Install queued.",
+          },
+        }, 202);
+      }
+      if (url.startsWith("/api/v1/mods")) return json({ total: 1, mods: [mod] });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+
+    await wrapper.findAll("button").find((button) => button.text() === "Browse mods")!.trigger("click");
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Module Manager"));
+    await wrapper.findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(true);
+    });
+    expect(MockEventSource.instances[0]?.url).toBe("/api/v1/jobs/job-1/events");
+
+    await wrapper.findAll("button").find((button) => button.text() === "Dashboard")!.trigger("click");
+    expect(wrapper.text()).toContain("Active installation");
+    expect(wrapper.find('[data-job-id="job-1"]').exists()).toBe(true);
+
+    MockEventSource.instances[0]!.emit({
+      jobId: "job-1",
+      status: "succeeded",
+      phase: "done",
+      message: "Install complete.",
+      bytesReceived: 200,
+      bytesTotal: 200,
+    });
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-job-id="job-1"]').text()).toContain("Installed");
+      expect(installedLoads).toBe(2);
+      expect(updateLoads).toBe(2);
+    });
+    expect(MockEventSource.instances[0]?.closed).toBe(true);
+
+    await wrapper.find('button[aria-label="Dismiss ModuleManager install"]').trigger("click");
+    expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(false);
   });
 
   it("shows a connected local service", async () => {

@@ -5,7 +5,6 @@ import type {
   CkanModule,
   InstallPlanResponse,
   InstalledMod,
-  JobProgressEvent,
   RegistryResponse,
 } from "@kraken/contracts";
 import ModFilterBar from "./ModFilterBar.vue";
@@ -22,9 +21,8 @@ const props = defineProps<{
   isSearching: boolean;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifier?: string;
+  installingIdentifiers: string[];
   uninstallingIdentifier?: string;
-  jobProgress?: JobProgressEvent;
   dependencyPrompt?: { mod: CkanModule; plan: InstallPlanResponse };
   selectedTag: string;
   customTag: string;
@@ -62,20 +60,6 @@ const missingDependencies = computed(() => {
 });
 
 const offset = computed(() => props.currentPage * props.pageSize);
-
-function progressLabel(event: JobProgressEvent | undefined): string {
-  if (event === undefined) {
-    return "";
-  }
-  if (event.phase === "downloading" && event.bytesReceived !== undefined) {
-    const total = event.bytesTotal;
-    if (total !== undefined && total > 0) {
-      return `Downloading… ${Math.min(100, Math.round((event.bytesReceived / total) * 100))}%`;
-    }
-    return `Downloading… ${event.bytesReceived} bytes`;
-  }
-  return event.message ?? event.phase;
-}
 </script>
 
 <template>
@@ -106,9 +90,6 @@ function progressLabel(event: JobProgressEvent | undefined): string {
           </button>
         </li>
       </ul>
-      <p v-if="jobProgress !== undefined" class="mt-4 text-sm text-cyan-300" aria-live="polite">
-        {{ progressLabel(jobProgress) }}
-      </p>
     </section>
 
     <section v-if="registry !== undefined" class="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
@@ -161,7 +142,7 @@ function progressLabel(event: JobProgressEvent | undefined): string {
           :compatible-only="compatibleOnly"
           :installed-mods="installedMods"
           :available-updates="availableUpdates"
-          :installing-identifier="installingIdentifier"
+          :installing-identifiers="installingIdentifiers"
           @install="emit('install', $event)"
           @select="emit('selectMod', $event)"
         />
@@ -220,7 +201,7 @@ function progressLabel(event: JobProgressEvent | undefined): string {
       :ksp-version="kspVersion"
       :installed-mods="installedMods"
       :available-updates="availableUpdates"
-      :installing-identifier="installingIdentifier"
+      :installing-identifiers="installingIdentifiers"
       :uninstalling-identifier="uninstallingIdentifier"
       :is-loading-versions="isLoadingVersions"
       @close="emit('selectMod', undefined)"

@@ -32,9 +32,8 @@ const baseProps = {
   availableUpdates: [
     { identifier: "ModuleManager", name: "Module Manager", installedVersion: "4.2.3", availableVersion: "4.2.4" },
   ],
-  installingIdentifier: undefined,
+  installingIdentifiers: [],
   uninstallingIdentifier: undefined,
-  jobProgress: undefined,
   dependencyPrompt: undefined,
   selectedTag: "",
   customTag: "",

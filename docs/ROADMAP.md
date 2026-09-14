@@ -83,12 +83,14 @@
 - [x] **6.1. Dashboard View:**
     *   Display active KSP installation details, total installed mods, and available updates.
     *   Keep the project brand mark from `apps/frontend/public/` / `assets/` in the app chrome.
-- [ ] **6.2. Mod Browser View:**
+- [x] **6.2. Mod Browser View:**
     *   Data table / grid displaying mods with search bars, category filters (Gameplay, Parts, Graphics), and game version compatibility flags.
+    *   Includes pagination, installed/update badges, mod details, and install/uninstall actions.
 - [x] **6.3. Mod Details Panel:**
     *   Show detailed descriptions, author info, project links, version history, and dependencies.
-- [ ] **6.4. Queue & Progress Manager:**
-*   A persistent bottom bar or sidebar showing real-time download and extraction progress (via SSE; WebSockets only if bidirectional communication becomes necessary).
+- [x] **6.4. Queue & Progress Manager:**
+    *   App-level install queue tracks concurrent jobs and real-time download/install phases through independent SSE subscriptions.
+    *   Persistent bottom panel provides accessible progress, terminal status, errors, and finished-job dismissal across frontend navigation.
 
 ## Phase 7: Build & Packaging (Distribution)
 *Goal: Compile the entire stack into a single, user-friendly executable file using modern Node.js features.*

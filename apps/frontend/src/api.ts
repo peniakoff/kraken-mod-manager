@@ -151,7 +151,16 @@ export async function getJob(jobId: string): Promise<JobResponse> {
 export function watchJobProgress(jobId: string, onEvent: (event: JobProgressEvent) => void): () => void {
   const source = new EventSource(`/api/v1/jobs/${encodeURIComponent(jobId)}/events`);
   source.onmessage = (message) => {
-    const parsed = jobProgressEventSchema.safeParse(JSON.parse(message.data as string));
+    if (typeof message.data !== "string") {
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(message.data);
+    } catch {
+      return;
+    }
+    const parsed = jobProgressEventSchema.safeParse(payload);
     if (parsed.success) {
       onEvent(parsed.data);
       if (parsed.data.status === "succeeded" || parsed.data.status === "failed") {

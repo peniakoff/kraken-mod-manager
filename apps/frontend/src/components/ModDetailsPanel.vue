@@ -3,16 +3,18 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { AvailableUpdate, CkanModule, CkanResources, InstalledMod } from "@kraken/contracts";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   mod: CkanModule;
   versions: CkanModule[];
   kspVersion?: string;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifier?: string;
+  installingIdentifiers?: string[];
   uninstallingIdentifier?: string;
   isLoadingVersions?: boolean;
-}>();
+}>(), {
+  installingIdentifiers: () => [],
+});
 
 const emit = defineEmits<{
   close: [];
@@ -57,7 +59,7 @@ const compat = computed(() => {
   return ok ? { text: `Compatible with KSP ${props.kspVersion}`, ok: true } : { text: "May not be compatible", ok: false };
 });
 
-const isInstalling = computed(() => props.installingIdentifier === props.mod.identifier);
+const isInstalling = computed(() => props.installingIdentifiers.includes(props.mod.identifier));
 const isUninstalling = computed(() => props.uninstallingIdentifier === props.mod.identifier);
 
 function isSafeUrl(url: string | undefined): boolean {

@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import type {
   AvailableUpdate,
   CkanModule,
   DirectoryListingResponse,
   InstallPlanResponse,
   InstalledMod,
-  JobProgressEvent,
   KspInstallation,
   RegistryResponse,
 } from "@kraken/contracts";
@@ -26,13 +25,13 @@ import {
   saveInstallation,
   searchMods,
   uninstallMod,
-  watchJobProgress,
 } from "./api.js";
 import AppShell from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
 import DashboardView from "./components/DashboardView.vue";
 import SetupView from "./components/SetupView.vue";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
+import { useInstallQueue } from "./useInstallQueue.js";
 
 type AppView = "dashboard" | "browse";
 
@@ -59,14 +58,33 @@ const isSearching = ref(false);
 
 const installedMods = ref<InstalledMod[]>([]);
 const availableUpdates = ref<AvailableUpdate[]>([]);
-const installingIdentifier = ref<string>();
+const pendingInstallIdentifiers = ref<string[]>([]);
 const uninstallingIdentifier = ref<string>();
-const jobProgress = ref<JobProgressEvent>();
 const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse }>();
 const selectedMod = ref<CkanModule>();
 const selectedModVersions = ref<CkanModule[]>([]);
 const isLoadingVersions = ref(false);
-let stopWatchingJob: (() => void) | undefined;
+
+const installQueue = useInstallQueue({
+  onSucceeded: () => {
+    void refreshInstalledState();
+  },
+  onFailed: (job) => {
+    errorMessage.value = job.error ?? "Install failed.";
+    status.value = "error";
+  },
+});
+const {
+  jobs: installJobs,
+  activeIdentifiers: activeInstallIdentifiers,
+  add: addInstallJob,
+  dismiss: dismissInstall,
+  clearFinished: clearFinishedInstalls,
+} = installQueue;
+
+const installingIdentifiers = computed(() => [
+  ...new Set([...pendingInstallIdentifiers.value, ...activeInstallIdentifiers.value]),
+]);
 
 const effectiveTag = computed(() => {
   // A typed custom tag takes precedence over the selected preset.
@@ -132,6 +150,21 @@ async function loadUpdates(): Promise<void> {
   } catch {
     availableUpdates.value = [];
   }
+}
+
+async function refreshInstalledState(): Promise<void> {
+  try {
+    await Promise.all([loadInstalledMods(), loadUpdates()]);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Installed mods could not be refreshed.";
+    status.value = "error";
+  }
+}
+
+function setInstallPending(identifier: string, pending: boolean): void {
+  pendingInstallIdentifiers.value = pending
+    ? [...new Set([...pendingInstallIdentifiers.value, identifier])]
+    : pendingInstallIdentifiers.value.filter((item) => item !== identifier);
 }
 
 async function selectInstallation(path: string): Promise<void> {
@@ -277,11 +310,9 @@ async function onInstall(mod: CkanModule): Promise<void> {
   if (mod.download === undefined) {
     return;
   }
-  installingIdentifier.value = mod.identifier;
+  setInstallPending(mod.identifier, true);
   errorMessage.value = undefined;
-  jobProgress.value = undefined;
   dependencyPrompt.value = undefined;
-  stopWatchingJob?.();
   try {
     const plan = await planModInstall(mod.identifier, mod.version);
     if (plan.status === "blocked") {
@@ -291,13 +322,13 @@ async function onInstall(mod: CkanModule): Promise<void> {
       ].join(" ");
       errorMessage.value = details.length > 0 ? details : "Install plan is blocked by dependencies or conflicts.";
       status.value = "error";
-      installingIdentifier.value = undefined;
+      setInstallPending(mod.identifier, false);
       return;
     }
 
     const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
     if (missing.length > 0) {
-      installingIdentifier.value = undefined;
+      setInstallPending(mod.identifier, false);
       dependencyPrompt.value = { mod, plan };
       return;
     }
@@ -306,7 +337,7 @@ async function onInstall(mod: CkanModule): Promise<void> {
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "Install could not be planned.";
     status.value = "error";
-    installingIdentifier.value = undefined;
+    setInstallPending(mod.identifier, false);
   }
 }
 
@@ -320,34 +351,24 @@ async function confirmDependencyInstall(): Promise<void> {
 }
 
 function cancelDependencyInstall(): void {
+  const identifier = dependencyPrompt.value?.mod.identifier;
   dependencyPrompt.value = undefined;
-  installingIdentifier.value = undefined;
+  if (identifier !== undefined) {
+    setInstallPending(identifier, false);
+  }
 }
 
 async function startInstallJob(mod: CkanModule, installDependencies: boolean): Promise<void> {
-  installingIdentifier.value = mod.identifier;
+  setInstallPending(mod.identifier, true);
   errorMessage.value = undefined;
-  jobProgress.value = undefined;
-  stopWatchingJob?.();
   try {
     const accepted = await installMod(mod.identifier, mod.version, installDependencies);
-    stopWatchingJob = watchJobProgress(accepted.job.jobId, (event) => {
-      jobProgress.value = event;
-      if (event.status === "succeeded") {
-        void loadInstalledMods();
-        void loadUpdates();
-        installingIdentifier.value = undefined;
-      }
-      if (event.status === "failed") {
-        errorMessage.value = event.error ?? "Install failed.";
-        status.value = "error";
-        installingIdentifier.value = undefined;
-      }
-    });
+    addInstallJob(accepted.job);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "Install could not be started.";
     status.value = "error";
-    installingIdentifier.value = undefined;
+  } finally {
+    setInstallPending(mod.identifier, false);
   }
 }
 
@@ -386,9 +407,6 @@ watch(searchQuery, scheduleSearch);
 watch([selectedTag, customTag, compatibleOnly], scheduleSearch);
 
 onMounted(loadSetup);
-onUnmounted(() => {
-  stopWatchingJob?.();
-});
 </script>
 
 <template>
@@ -412,7 +430,10 @@ onUnmounted(() => {
     :service-version="version"
     :status="status"
     :error-message="errorMessage"
+    :install-jobs="installJobs"
     @navigate="activeView = $event"
+    @dismiss-install="dismissInstall"
+    @clear-finished-installs="clearFinishedInstalls"
   >
     <DashboardView
       v-if="activeView === 'dashboard'"
@@ -437,9 +458,8 @@ onUnmounted(() => {
       :is-searching="isSearching"
       :installed-mods="installedMods"
       :available-updates="availableUpdates"
-      :installing-identifier="installingIdentifier"
+      :installing-identifiers="installingIdentifiers"
       :uninstalling-identifier="uninstallingIdentifier"
-      :job-progress="jobProgress"
       :dependency-prompt="dependencyPrompt"
       :ksp-version="installation.version"
       :page-size="pageSize"

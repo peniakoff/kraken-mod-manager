@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { JobResponse } from "@kraken/contracts";
+import InstallQueuePanel from "./InstallQueuePanel.vue";
+
 export type AppView = "dashboard" | "browse";
 
 defineProps<{
@@ -6,15 +9,18 @@ defineProps<{
   serviceVersion?: string;
   status: "checking" | "ready" | "unavailable" | "error";
   errorMessage?: string;
+  installJobs: JobResponse[];
 }>();
 
 defineEmits<{
   navigate: [view: AppView];
+  dismissInstall: [jobId: string];
+  clearFinishedInstalls: [];
 }>();
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100">
+  <div class="min-h-screen bg-slate-950 text-slate-100" :class="installJobs.length > 0 ? 'pb-72' : ''">
     <header class="border-b border-slate-800 bg-slate-900/80">
       <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-4 px-6 py-4">
         <div class="flex items-center gap-3">
@@ -66,5 +72,10 @@ defineEmits<{
       </p>
       <slot />
     </div>
+    <InstallQueuePanel
+      :jobs="installJobs"
+      @dismiss="$emit('dismissInstall', $event)"
+      @clear-finished="$emit('clearFinishedInstalls')"
+    />
   </div>
 </template>
