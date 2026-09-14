@@ -26,12 +26,18 @@ function fixtureArchive(): Uint8Array {
         identifier: "ModuleManager",
         name: "Module Manager",
         abstract: "Patching plugin",
+        description: "Detailed description of Module Manager.",
+        license: "CC-BY-SA",
         author: ["sarbian"],
         version: "4.2.3",
         tags: ["plugin"],
         ksp_version_min: "1.8.0",
         ksp_version_max: "1.12.99",
         download: "https://example.test/mm.zip",
+        resources: {
+          homepage: "https://forum.kerbalspaceprogram.com/topic/50533-module-manager/",
+          repository: "https://github.com/sarbian/ModuleManager",
+        },
       }),
     },
     {
@@ -182,6 +188,66 @@ describe("CKAN registry API", () => {
     const response = await request(app).get("/api/v1/mods").query({ limit: 0 });
     expect(response.status).toBe(400);
     expect(response.body.code).toBe("INVALID_REQUEST");
+  });
+
+  it("returns mod details and 404 for unknown mod", async () => {
+    const { app } = await createRegistryTestApp();
+    await request(app).post("/api/v1/registry/refresh");
+
+    // 404 for non-existent mod
+    const notFound = await request(app).get("/api/v1/mods/NonExistentMod");
+    expect(notFound.status).toBe(404);
+    expect(notFound.body.code).toBe("MOD_NOT_FOUND");
+
+    // 200 with details and resources
+    const response = await request(app).get("/api/v1/mods/ModuleManager");
+    expect(response.status).toBe(200);
+    expect(response.body.mod).toMatchObject({
+      identifier: "ModuleManager",
+      name: "Module Manager",
+      description: "Detailed description of Module Manager.",
+      license: "CC-BY-SA",
+      version: "4.2.3",
+      resources: {
+        homepage: "https://forum.kerbalspaceprogram.com/topic/50533-module-manager/",
+        repository: "https://github.com/sarbian/ModuleManager",
+      },
+    });
+
+    // Case-insensitive identifier
+    const responseLower = await request(app).get("/api/v1/mods/modulemanager");
+    expect(responseLower.status).toBe(200);
+    expect(responseLower.body.mod.identifier).toBe("ModuleManager");
+
+    // Invalid identifiers (whitespace or too long)
+    const whitespace = await request(app).get("/api/v1/mods/%20");
+    expect(whitespace.status).toBe(400);
+    expect(whitespace.body.code).toBe("INVALID_REQUEST");
+
+    const tooLong = await request(app).get(`/api/v1/mods/${"a".repeat(129)}`);
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.code).toBe("INVALID_REQUEST");
+  });
+
+  it("returns versions sorted descending and 404 for unknown mod", async () => {
+    const { app } = await createRegistryTestApp();
+    await request(app).post("/api/v1/registry/refresh");
+
+    const notFound = await request(app).get("/api/v1/mods/UnknownMod/versions");
+    expect(notFound.status).toBe(404);
+    expect(notFound.body.code).toBe("MOD_NOT_FOUND");
+
+    const response = await request(app).get("/api/v1/mods/MechJeb2/versions");
+    expect(response.status).toBe(200);
+    expect(response.body.identifier).toBe("MechJeb2");
+    expect(response.body.versions).toHaveLength(2);
+    expect(response.body.versions[0].version).toBe("2.15.0");
+    expect(response.body.versions[1].version).toBe("2.14.0");
+
+    // Case-insensitive identifier
+    const responseLower = await request(app).get("/api/v1/mods/mechjeb2/versions");
+    expect(responseLower.status).toBe(200);
+    expect(responseLower.body.versions).toHaveLength(2);
   });
 });
 

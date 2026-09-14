@@ -34,10 +34,22 @@ export interface CkanRelationships {
   suggests: CkanRelationship[];
 }
 
+export interface CkanResources {
+  homepage?: string;
+  repository?: string;
+  bugtracker?: string;
+  spacedock?: string;
+  curse?: string;
+  manual?: string;
+  metanet?: string;
+}
+
 export interface CkanModule {
   identifier: string;
   name: string;
   abstract?: string;
+  description?: string;
+  license?: string;
   authors: string[];
   version: string;
   kspVersion?: string;
@@ -49,6 +61,7 @@ export interface CkanModule {
   downloadHash?: CkanDownloadHash;
   install?: CkanInstallStanza[];
   relationships?: CkanRelationships;
+  resources?: CkanResources;
 }
 
 export interface HttpPort {
@@ -151,6 +164,21 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     module.relationships = relationships;
   }
 
+  const description = asOptionalString(document.description);
+  if (description !== undefined && description.trim().length > 0) {
+    module.description = description;
+  }
+
+  const license = normalizeLicense(document.license);
+  if (license !== undefined) {
+    module.license = license;
+  }
+
+  const resources = parseResources(document.resources);
+  if (resources !== undefined) {
+    module.resources = resources;
+  }
+
   return module;
 }
 
@@ -203,9 +231,19 @@ export async function refreshRegistry(
 
 export class CkanIndex {
   private readonly modules: readonly CkanModule[];
+  private readonly byIdentifier = new Map<string, CkanModule[]>();
 
   constructor(modules: readonly CkanModule[]) {
     this.modules = [...modules];
+    for (const module of this.modules) {
+      const key = module.identifier.trim().toLowerCase();
+      const existing = this.byIdentifier.get(key);
+      if (existing === undefined) {
+        this.byIdentifier.set(key, [module]);
+      } else {
+        existing.push(module);
+      }
+    }
   }
 
   get size(): number {
@@ -217,7 +255,19 @@ export class CkanIndex {
   }
 
   findByIdentifier(identifier: string): CkanModule[] {
-    return this.modules.filter((module) => module.identifier === identifier);
+    const target = identifier.trim().toLowerCase();
+    const matches = this.byIdentifier.get(target);
+    return matches !== undefined ? [...matches] : [];
+  }
+
+  listVersions(identifier: string): CkanModule[] {
+    const matching = this.findByIdentifier(identifier);
+    return matching.sort((left, right) => compareCkanVersions(right.version, left.version));
+  }
+
+  getLatest(identifier: string): CkanModule | undefined {
+    const versions = this.listVersions(identifier);
+    return versions[0];
   }
 
   search(options: CkanSearchOptions = {}): CkanSearchResult {
@@ -325,7 +375,10 @@ function matchesQuery(module: CkanModule, query: string): boolean {
   if (module.tags.some((tag) => tag.toLowerCase().includes(query))) {
     return true;
   }
-  return module.abstract?.toLowerCase().includes(query) === true;
+  if (module.abstract?.toLowerCase().includes(query) === true) {
+    return true;
+  }
+  return module.description?.toLowerCase().includes(query) === true;
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -372,6 +425,73 @@ function normalizeTags(value: unknown): string[] {
     .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function asResourceUrl(value: unknown): string | undefined {
+  const str = asNonEmptyString(value);
+  if (str === undefined || str.length > 2048) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(str);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? str : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeLicense(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (Array.isArray(value)) {
+    const licenses = value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return licenses.length > 0 ? licenses.join(", ") : undefined;
+  }
+  return undefined;
+}
+
+function parseResources(value: unknown): CkanResources | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const resources: CkanResources = {};
+
+  const homepage = asResourceUrl(raw.homepage);
+  if (homepage !== undefined) {
+    resources.homepage = homepage;
+  }
+  const repository = asResourceUrl(raw.repository);
+  if (repository !== undefined) {
+    resources.repository = repository;
+  }
+  const bugtracker = asResourceUrl(raw.bugtracker);
+  if (bugtracker !== undefined) {
+    resources.bugtracker = bugtracker;
+  }
+  const spacedock = asResourceUrl(raw.spacedock);
+  if (spacedock !== undefined) {
+    resources.spacedock = spacedock;
+  }
+  const curse = asResourceUrl(raw.curse);
+  if (curse !== undefined) {
+    resources.curse = curse;
+  }
+  const manual = asResourceUrl(raw.manual);
+  if (manual !== undefined) {
+    resources.manual = manual;
+  }
+  const metanet = asResourceUrl(raw.metanet);
+  if (metanet !== undefined) {
+    resources.metanet = metanet;
+  }
+
+  return Object.keys(resources).length > 0 ? resources : undefined;
 }
 
 function parseDownloadHash(value: unknown): CkanDownloadHash | undefined {

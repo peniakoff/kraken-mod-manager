@@ -1,6 +1,6 @@
 {
   "name": "kraken-mod-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A lightweight, cross-platform mod manager for Kerbal Space Program.",
   "packageManager": "pnpm@11.13.1",

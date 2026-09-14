@@ -14,6 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   install: [mod: CkanModule];
+  select: [mod: CkanModule];
 }>();
 
 const installedById = computed(() => new Map(props.installedMods.map((mod) => [mod.identifier, mod])));
@@ -84,15 +85,26 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
             Update: {{ updatesById.get(mod.identifier)?.availableVersion }}
           </span>
         </div>
-        <button
-          v-if="mod.download !== undefined"
-          class="mt-3 rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
-          type="button"
-          :disabled="installingIdentifier === mod.identifier"
-          @click="emit('install', mod)"
-        >
-          {{ installingIdentifier === mod.identifier ? "Installing…" : "Install" }}
-        </button>
+        <div class="mt-3 flex items-center gap-2">
+          <button
+            v-if="mod.download !== undefined"
+            class="rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+            type="button"
+            :disabled="installingIdentifier === mod.identifier"
+            @click="emit('install', mod)"
+          >
+            {{ installingIdentifier === mod.identifier ? "Installing…" : "Install" }}
+          </button>
+          <button
+            class="rounded-md border border-slate-600 px-3 py-1 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+            type="button"
+            :aria-label="`View details for ${mod.name}`"
+            data-testid="mod-details-btn"
+            @click="emit('select', mod)"
+          >
+            Details
+          </button>
+        </div>
       </li>
     </ul>
     <p v-else class="mt-3 text-sm text-slate-400">No mods match the current search and filters.</p>

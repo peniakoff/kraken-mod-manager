@@ -85,7 +85,7 @@
     *   Keep the project brand mark from `apps/frontend/public/` / `assets/` in the app chrome.
 - [ ] **6.2. Mod Browser View:**
     *   Data table / grid displaying mods with search bars, category filters (Gameplay, Parts, Graphics), and game version compatibility flags.
-- [ ] **6.3. Mod Details Panel:**
+- [x] **6.3. Mod Details Panel:**
     *   Show detailed descriptions, author info, project links, version history, and dependencies.
 - [ ] **6.4. Queue & Progress Manager:**
 *   A persistent bottom bar or sidebar showing real-time download and extraction progress (via SSE; WebSockets only if bidirectional communication becomes necessary).

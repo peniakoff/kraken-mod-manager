@@ -10,6 +10,8 @@ import {
   installationsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  modDetailsResponseSchema,
+  modVersionsResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
   planModRequestSchema,
@@ -241,6 +243,51 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       }
       const result = dependencies.registryService.search(searchOptions);
       response.json(modsResponseSchema.parse(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/mods/:identifier/versions", async (request, response, next) => {
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0 || identifier.length > 128) {
+      sendError(response, 400, "INVALID_REQUEST", "A valid mod identifier is required.");
+      return;
+    }
+
+    try {
+      await dependencies.registryService.ensureLoaded();
+      const versions = dependencies.registryService.listVersions(identifier);
+      if (versions.length === 0) {
+        sendError(response, 404, "MOD_NOT_FOUND", `Mod "${identifier}" was not found.`);
+        return;
+      }
+      response.json(
+        modVersionsResponseSchema.parse({
+          identifier: versions[0]?.identifier ?? identifier,
+          versions,
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/mods/:identifier", async (request, response, next) => {
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0 || identifier.length > 128) {
+      sendError(response, 400, "INVALID_REQUEST", "A valid mod identifier is required.");
+      return;
+    }
+
+    try {
+      await dependencies.registryService.ensureLoaded();
+      const mod = dependencies.registryService.getLatestModule(identifier);
+      if (mod === undefined) {
+        sendError(response, 404, "MOD_NOT_FOUND", `Mod "${identifier}" was not found.`);
+        return;
+      }
+      response.json(modDetailsResponseSchema.parse({ mod }));
     } catch (error) {
       next(error);
     }

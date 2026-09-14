@@ -80,6 +80,14 @@ export class RegistryService {
     );
   }
 
+  getLatestModule(identifier: string): CkanModule | undefined {
+    return this.index.getLatest(identifier);
+  }
+
+  listVersions(identifier: string): CkanModule[] {
+    return this.index.listVersions(identifier);
+  }
+
   listModules(): readonly CkanModule[] {
     return this.index.allModules();
   }
