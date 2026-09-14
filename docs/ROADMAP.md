@@ -95,14 +95,15 @@
 ## Phase 7: Build & Packaging (Distribution)
 *Goal: Compile the entire stack into a single, user-friendly executable file using modern Node.js features.*
 
-- [ ] **7.1. Build Pipeline Setup:**
-    *   Automate the build process via `pnpm` scripts: Compile Vue.js frontend -> move to backend static folder -> compile TypeScript backend.
-    *   Note: local `pnpm build` already compiles the frontend, copies it into the backend, and bundles the server to CJS; SEA packaging remains the open work.
+- [x] **7.1. Build Pipeline Setup:**
+    *   `pnpm package:sea` builds the workspaces, embeds the Vue output alongside the bundled CommonJS backend, and creates a current-platform Node 24 SEA binary.
+    *   `pnpm smoke:sea` verifies the standalone health endpoint, embedded UI assets, SPA fallback, and missing/traversal asset handling on loopback.
 - [ ] **7.2. Standalone Executable Generation (Node 24 SEA):**
     *   Utilize Node.js v24 native SEA (Single Executable Application) capabilities to output native binaries:
         *   Windows (`kraken-mod-manager-win-x64.exe`)
         *   Linux (`kraken-mod-manager-linux-x64`)
         *   macOS (`kraken-mod-manager-macos-x64 / arm64`)
+    *   Add the full per-platform build matrix, signing, and release artifacts; 7.1 currently proves the host-platform pipeline.
 - [ ] **7.3. Cross-Platform Testing:**
     *   Verify the executables run correctly on fresh VMs without Node.js installed.
 

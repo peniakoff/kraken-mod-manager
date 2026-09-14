@@ -14,7 +14,9 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm -r typecheck",
     "test": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm -r test",
-    "start": "pnpm --filter @kraken/backend start"
+    "start": "pnpm --filter @kraken/backend start",
+    "package:sea": "pnpm build && pnpm --filter @kraken/backend package:sea",
+    "smoke:sea": "pnpm --filter @kraken/backend smoke:sea"
   },
   "devDependencies": {
     "oxlint": "^1.82.0",

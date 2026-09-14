@@ -2,6 +2,7 @@ import { createApp, createDefaultDependencies } from "./app.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
+import { createSeaFrontendAssets } from "./frontend-assets.js";
 
 const defaultPort = 31415;
 const host = "127.0.0.1";
@@ -37,10 +38,20 @@ function openBrowser(url: string): void {
 
 async function start(): Promise<void> {
   const port = getPort(process.env.KMM_PORT);
-  const entryPath = resolve(process.argv[1] ?? process.cwd());
-  const frontendDirectory = process.env.KMM_FRONTEND_DIR ?? join(dirname(entryPath), "frontend");
+  const frontendAssets = process.env.KMM_FRONTEND_DIR === undefined ? createSeaFrontendAssets() : undefined;
+  const frontendDirectory =
+    frontendAssets === undefined
+      ? (process.env.KMM_FRONTEND_DIR ?? join(dirname(resolve(process.argv[1] ?? process.cwd())), "frontend"))
+      : undefined;
+  const dependencies = createDefaultDependencies(frontendDirectory);
+  if (frontendAssets !== undefined) {
+    dependencies.frontendAssets = frontendAssets;
+  }
   const server = createServer(
-    createApp(process.env.npm_package_version, createDefaultDependencies(frontendDirectory)),
+    createApp(
+      process.env.KMM_VERSION ?? process.env.KMM_BUILD_VERSION ?? process.env.npm_package_version,
+      dependencies,
+    ),
   );
 
   await new Promise<void>((resolve, reject) => {
