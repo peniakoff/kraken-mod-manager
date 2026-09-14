@@ -48,6 +48,11 @@ import {
 } from "./install-service.js";
 import { JobStore } from "./job-store.js";
 import {
+  getFrontendContentType,
+  normalizeFrontendAssetPath,
+  type FrontendAssets,
+} from "./frontend-assets.js";
+import {
   getBrowseRoots,
   getConfigFilePath,
   getDownloadCacheDirectory,
@@ -65,6 +70,7 @@ export interface AppDependencies {
   registryService: RegistryService;
   installService: InstallService;
   frontendDirectory?: string;
+  frontendAssets?: FrontendAssets;
   /** Overrides SPA fallback sendFile rate limit (defaults: 300 / 15 min). */
   spaFallbackRateLimit?: {
     windowMs: number;
@@ -467,12 +473,56 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       legacyHeaders: false,
     });
     app.get("/{*path}", spaFallbackLimiter, (request, response, next) => {
-      if (request.path.includes(".") || !request.accepts("html")) {
+      const assetKey = normalizeFrontendAssetPath(request.path);
+      if (assetKey === undefined || assetKey.includes(".") || !request.accepts("html")) {
         next();
         return;
       }
 
       response.sendFile(join(frontendDirectory, "index.html"));
+    });
+  }
+
+  const frontendAssets = dependencies.frontendAssets;
+  if (frontendAssets !== undefined) {
+    app.get("/{*path}", (request, response, next) => {
+      const assetKey = normalizeFrontendAssetPath(request.path);
+      const asset = assetKey === undefined ? undefined : frontendAssets.read(assetKey);
+      if (assetKey === undefined || asset === undefined) {
+        next();
+        return;
+      }
+
+      response.setHeader("Content-Type", getFrontendContentType(assetKey));
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.send(asset);
+    });
+
+    const spaFallbackRateLimit = dependencies.spaFallbackRateLimit ?? {
+      windowMs: 15 * 60 * 1000,
+      limit: 300,
+    };
+    const spaFallbackLimiter = rateLimit({
+      windowMs: spaFallbackRateLimit.windowMs,
+      limit: spaFallbackRateLimit.limit,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+    });
+    app.get("/{*path}", spaFallbackLimiter, (request, response, next) => {
+      const assetKey = normalizeFrontendAssetPath(request.path);
+      if (assetKey === undefined || assetKey.includes(".") || !request.accepts("html")) {
+        next();
+        return;
+      }
+
+      const index = frontendAssets.read("index.html");
+      if (index === undefined) {
+        next(new Error("The embedded frontend does not contain index.html."));
+        return;
+      }
+      response.setHeader("Content-Type", getFrontendContentType("index.html"));
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.send(index);
     });
   }
 

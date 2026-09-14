@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc --project tsconfig.json && esbuild src/server.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs && node scripts/copy-frontend.mjs",
-    "lint": "oxlint --deny-warnings src test",
+    "build": "tsc --project tsconfig.json && node scripts/build-backend.mjs && node scripts/copy-frontend.mjs",
+    "lint": "oxlint --deny-warnings src test scripts",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
-    "start": "node dist/server.cjs"
+    "start": "node dist/server.cjs",
+    "package:sea": "node scripts/build-sea.mjs",
+    "smoke:sea": "node scripts/smoke-sea.mjs"
   },
   "dependencies": {
     "@kraken/contracts": "workspace:*",
@@ -23,6 +25,7 @@
     "@types/node": "^26.1.1",
     "@types/supertest": "^7.2.1",
     "esbuild": "^0.28.0",
+    "postject": "1.0.0-alpha.6",
     "supertest": "^7.0.0",
     "tsx": "^4.0.0",
     "vitest": "^4.0.0"

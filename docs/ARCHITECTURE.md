@@ -38,6 +38,16 @@ be bundled and frontend assets accessed through an asset-provider abstraction.
 Native dependencies should be avoided until per-platform SEA builds and signing
 are in place.
 
+The packaging pipeline bundles the backend as CommonJS, embeds the Vue build as
+SEA assets, and injects the preparation blob into the current Node executable.
+At runtime, the server selects the embedded asset provider only when `node:sea`
+reports SEA execution; development and ordinary production builds continue to
+serve the copied frontend directory. An explicit `KMM_FRONTEND_DIR` also takes
+precedence for diagnostics. The application version is baked into the backend
+bundle as a fallback so the standalone health endpoint does not depend on
+package manager environment variables, while `KMM_VERSION` remains an explicit
+runtime override.
+
 ## Progress events
 
 Download and extraction progress use Server-Sent Events on
