@@ -229,6 +229,8 @@ describe("App", () => {
       { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
     ];
     let installed = managed;
+    let installedLoads = 0;
+    let planLoads = 0;
     const uninstallBodies: unknown[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -240,9 +242,13 @@ describe("App", () => {
         });
       }
       if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 2 });
-      if (url === "/api/v1/installed-mods") return json({ mods: installed });
+      if (url === "/api/v1/installed-mods") {
+        installedLoads += 1;
+        return json({ mods: installed });
+      }
       if (url === "/api/v1/updates") return json({ updates: [] });
       if (url === "/api/v1/mods/ModuleManager/uninstall-plan" && init?.method === "POST") {
+        planLoads += 1;
         return json({
           target: { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" },
           dependents: [{ identifier: "DependentMod", name: "Dependent Mod", version: "1.0.0" }],
@@ -276,10 +282,14 @@ describe("App", () => {
     expect(uninstallBodies).toEqual([]);
 
     const confirm = () => wrapper.find('[role="dialog"]').findAll("button").find((button) => button.text() === "Uninstall")!;
+    const loadsBeforeConfirm = installedLoads;
     await confirm().trigger("click");
     await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("Review the plan again."));
     expect(uninstallBodies).toEqual([{ alsoRemove: ["DependentMod"] }]);
     expect(wrapper.text()).toContain("Uninstall Module Manager?");
+    // A rejected selection means the server state moved: refresh the plan and the inventory.
+    await vi.waitFor(() => expect(planLoads).toBe(2));
+    expect(installedLoads).toBeGreaterThan(loadsBeforeConfirm);
 
     await confirm().trigger("click");
     await vi.waitFor(() => expect(wrapper.text()).not.toContain("Uninstall Module Manager?"));

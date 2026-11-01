@@ -427,8 +427,21 @@ async function confirmUninstall(alsoRemove: string[]): Promise<void> {
     await loadInstalledMods();
     await loadUpdates();
   } catch (error) {
-    // Keep the dialog open so the user can read why and cancel or retry.
-    uninstallPrompt.value = { ...prompt, error: error instanceof Error ? error.message : "Uninstall failed." };
+    // Keep the dialog open with the reason. The server state moved (a
+    // rejected selection) or some mods were already removed (a partial
+    // failure), so refresh the inventory and the plan the user confirms.
+    const message = error instanceof Error ? error.message : "Uninstall failed.";
+    uninstallPrompt.value = { ...prompt, error: message };
+    await refreshInstalledState();
+    try {
+      const plan = await planUninstall(prompt.mod.identifier);
+      if (uninstallPrompt.value !== undefined) {
+        uninstallPrompt.value = { ...prompt, plan, error: message };
+      }
+    } catch (planError) {
+      const planMessage = planError instanceof Error ? planError.message : "The uninstall could not be planned again.";
+      uninstallPrompt.value = { ...prompt, error: `${message} ${planMessage}` };
+    }
   } finally {
     uninstallingIdentifier.value = undefined;
   }
