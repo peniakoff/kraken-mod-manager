@@ -67,6 +67,8 @@
     *   Correctly map and copy files to the `GameData` folder according to the specific `.ckan` installation instructions (handling `install` stanzas).
 - [x] **4.4. Uninstaller:**
     *   Track installed files and ensure clean removal from `GameData` without leaving orphaned files.
+    *   Remove managed mods that depend on the target together with it, after one confirmation.
+    *   Offer to remove automatically installed dependencies that nothing needs any more, and warn about manually installed mods that will break.
 
 ## Phase 5: Dependency Resolver (The Brain)
 *Goal: Handle complex mod relationships, dependencies, and conflicts.*

@@ -86,6 +86,14 @@ too. A sole candidate is picked automatically; when several mods qualify, the
 plan returns `status: "choice-required"` with the candidates, and the client
 re-plans and installs with a `choices` map (`{ "<choice key>": "<identifier>" }`).
 
+Uninstall is previewed first (`POST /api/v1/mods/:identifier/uninstall-plan`).
+Managed mods that depend on the target are removed with it, and dependencies
+Kraken installed automatically that nothing needs any more are offered for
+removal. Manually installed mods that would break are listed as a warning.
+`POST /api/v1/mods/:identifier/uninstall` takes the chosen `alsoRemove` list,
+re-checks it against a fresh plan, and returns `409 UNINSTALL_PLAN_MISMATCH`
+without removing anything when the selection would leave a managed mod broken.
+
 Install progress is streamed with Server-Sent Events on
 `GET /api/v1/jobs/:jobId/events`.
 
@@ -93,7 +101,8 @@ The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
 `GET`/`PUT /api/v1/config`, `GET /api/v1/fs/directories`, `GET /api/v1/registry`,
 `POST /api/v1/registry/refresh`, `GET /api/v1/mods`, `GET /api/v1/installed-mods`,
 `POST /api/v1/mods/:identifier/plan`, `POST /api/v1/mods/:identifier/install`,
-`DELETE /api/v1/mods/:identifier`, `GET /api/v1/jobs/:jobId`, and
+`POST /api/v1/mods/:identifier/uninstall-plan`,
+`POST /api/v1/mods/:identifier/uninstall`, `GET /api/v1/jobs/:jobId`, and
 `GET /api/v1/jobs/:jobId/events`.
 
 ## Branding
