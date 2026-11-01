@@ -45,7 +45,10 @@ Node 24 SEA, and `pnpm smoke:sea` checks it. On Linux,
 CI builds and smoke-tests `kraken-mod-manager-linux-x64`,
 `kraken-mod-manager-win-x64.exe`, `kraken-mod-manager-macos-arm64` and
 `kraken-mod-manager-macos-x64` on native runners and keeps them as workflow
-artifacts for 14 days. The binaries are not code-signed yet: macOS builds carry
+artifacts for 14 days. Pushing a `vX.Y.Z` tag that matches the package
+versions builds the same binaries and attaches them, with `SHA256SUMS` and the
+changelog notes, to a draft GitHub Release. On Linux and macOS, run
+`chmod +x` on a downloaded binary first. The binaries are not code-signed yet: macOS builds carry
 only an ad-hoc signature, so Gatekeeper warns about downloaded copies, and
 Windows SmartScreen may warn as well.
 

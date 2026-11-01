@@ -5,6 +5,28 @@ All notable changes to Kraken Mod Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-01
+
+### Added
+- **Virtual packages and `any_of` dependencies:** the resolver satisfies dependencies through CKAN `provides` and `any_of` groups. A sole candidate is picked automatically; when several mods qualify, the install dialog asks which one to use.
+- **Dependency-aware uninstall:** every uninstall is previewed first. Managed mods that depend on the target are removed with it, automatically installed dependencies that nothing needs any more are offered for removal, and manually installed mods that would break are listed as a warning.
+- **Standalone executables:** `pnpm package:sea` builds a Node 24 SEA binary, and CI builds and smoke-tests Windows x64, Linux x64, and macOS arm64/x64 binaries. The Linux binary is also checked in a container without Node.js.
+- **Release workflow:** pushing a `vX.Y.Z` tag builds all binaries and creates a draft GitHub Release with `SHA256SUMS` and notes from this changelog.
+- Issue forms for bug reports and feature requests, and a pull request template.
+
+### Changed
+- `DELETE /api/v1/mods/:identifier` is replaced by `POST /api/v1/mods/:identifier/uninstall-plan` and `POST /api/v1/mods/:identifier/uninstall`. A selection that no longer matches the server's plan returns `409 UNINSTALL_PLAN_MISMATCH`, and uninstalls are refused with `409 INSTALL_IN_PROGRESS` while an install runs.
+- The install manifest moves to schema v2 and records whether each mod was installed as a dependency. v1 manifests are migrated without losing records.
+- The registry cache moves to schema v2; an older cache is rebuilt on the next refresh.
+
+### Fixed
+- A mod that conflicts with a virtual package it provides itself (for example Scatterer) no longer blocks its own install.
+- Conflicts with dependencies planned later in the same install are detected.
+- The resolver no longer swaps an already planned or target version for another one to satisfy a dependency.
+
+### Known limitations
+- Binaries are not code-signed. macOS builds carry an ad-hoc signature only, so Gatekeeper and Windows SmartScreen may warn on first launch.
+
 ## [0.2.0] - 2026-09-14
 
 ### Added

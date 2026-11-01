@@ -116,6 +116,6 @@
 
 ## Phase 8: Release & Maintenance (v1.0.0)
 - [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
-- [ ] Set up binary-delivery CD (automated builds on new tags using `pnpm`); the existing workflow provides CI only.
-- [ ] Create Issue / Pull Request templates for the community.
+- [x] Set up binary-delivery CD: a `vX.Y.Z` tag builds all SEA binaries and creates a draft GitHub Release with checksums and changelog notes.
+- [x] Create Issue / Pull Request templates for the community.
 - [ ] Publish the first official Release (v1.0.0) on GitHub.
