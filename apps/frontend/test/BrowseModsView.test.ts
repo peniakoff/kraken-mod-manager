@@ -103,3 +103,94 @@ describe("BrowseModsView mod browser", () => {
     expect(wrapperWithSelected.find('[data-testid="mod-details-panel"]').exists()).toBe(true);
   });
 });
+
+const rssMod = {
+  identifier: "RealSolarSystem",
+  name: "Real Solar System",
+  authors: ["NathanKell"],
+  version: "1.0.0",
+  tags: ["planet-pack"],
+  download: "https://example.test/rss.zip",
+};
+
+const rssTarget = { identifier: "RealSolarSystem", name: "Real Solar System", version: "1.0.0" };
+
+function choicePrompt(choices: Record<string, string> = {}) {
+  return {
+    mod: rssMod,
+    choices,
+    plan: {
+      status: "choice-required" as const,
+      target: rssTarget,
+      toInstall: [rssTarget],
+      alreadySatisfied: [],
+      conflicts: [],
+      unmet: [],
+      optional: [],
+      choices: [
+        {
+          key: "RSSTextures",
+          label: "RSSTextures",
+          requiredBy: ["RealSolarSystem"],
+          candidates: [
+            { identifier: "RSSTextures4096", name: "RSS Textures 4096", version: "1.0.0", via: "provides" as const },
+            { identifier: "RSSTextures8192", name: "RSS Textures 8192", version: "1.0.0", via: "provides" as const },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+describe("BrowseModsView provider choices", () => {
+  it("renders a fieldset per pending choice with radio candidates", () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, dependencyPrompt: choicePrompt() } });
+
+    const fieldsets = wrapper.findAll("fieldset");
+    expect(fieldsets).toHaveLength(1);
+    expect(fieldsets[0]!.find("legend").text()).toBe("RSSTextures, required by Real Solar System");
+    const radios = fieldsets[0]!.findAll('input[type="radio"]');
+    expect(radios).toHaveLength(2);
+    expect(new Set(radios.map((radio) => radio.attributes("name")))).toHaveProperty("size", 1);
+    for (const radio of radios) {
+      const label = wrapper.find(`label[for="${radio.attributes("id")}"]`);
+      expect(label.text()).toContain("provides");
+    }
+  });
+
+  it("keeps Continue disabled until every choice is selected", async () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, dependencyPrompt: choicePrompt() } });
+    const continueButton = () => wrapper.findAll("button").find((button) => button.text() === "Continue")!;
+
+    expect(continueButton().attributes("disabled")).toBeDefined();
+    await wrapper.find('input[value="RSSTextures8192"]').setValue(true);
+    expect(continueButton().attributes("disabled")).toBeUndefined();
+  });
+
+  it("emits continueWithChoices with the merged selections", async () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, dependencyPrompt: choicePrompt({ A: "x" }) } });
+
+    await wrapper.find('input[value="RSSTextures8192"]').setValue(true);
+    await wrapper.findAll("button").find((button) => button.text() === "Continue")!.trigger("click");
+
+    expect(wrapper.emitted("continueWithChoices")).toEqual([[{ A: "x", RSSTextures: "RSSTextures8192" }]]);
+  });
+
+  it("shows the dependency confirmation when the plan is ok", () => {
+    const okPrompt = {
+      mod: rssMod,
+      choices: { RSSTextures: "RSSTextures8192" },
+      plan: {
+        ...choicePrompt().plan,
+        status: "ok" as const,
+        choices: [],
+        toInstall: [{ identifier: "RSSTextures8192", name: "RSS Textures 8192", version: "1.0.0" }, rssTarget],
+      },
+    };
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, dependencyPrompt: okPrompt } });
+
+    expect(wrapper.text()).toContain("Install required dependencies?");
+    expect(wrapper.text()).toContain("Real Solar System requires");
+    expect(wrapper.findAll("fieldset")).toHaveLength(0);
+  });
+});

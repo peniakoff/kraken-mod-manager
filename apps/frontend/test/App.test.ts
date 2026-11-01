@@ -131,6 +131,97 @@ describe("App", () => {
     expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(false);
   });
 
+  it("re-plans with choices and installs with them", async () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const mod = {
+      identifier: "RealSolarSystem",
+      name: "Real Solar System",
+      authors: ["NathanKell"],
+      version: "1.0.0",
+      tags: ["planet-pack"],
+      download: "https://example.test/rss.zip",
+    };
+    const target = { identifier: mod.identifier, name: mod.name, version: mod.version };
+    const chosen = { identifier: "RSSTextures8192", name: "RSS Textures 8192", version: "1.0.0" };
+    const basePlan = { target, alreadySatisfied: [], conflicts: [], unmet: [], optional: [] };
+    const planBodies: unknown[] = [];
+    let installBody: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 3 });
+      if (url === "/api/v1/installed-mods") return json({ mods: [] });
+      if (url === "/api/v1/updates") return json({ updates: [] });
+      if (url === "/api/v1/mods/RealSolarSystem/plan") {
+        const body: unknown = JSON.parse(String(init?.body));
+        planBodies.push(body);
+        if (planBodies.length === 1) {
+          return json({
+            ...basePlan,
+            status: "choice-required",
+            toInstall: [target],
+            choices: [
+              {
+                key: "RSSTextures",
+                label: "RSSTextures",
+                requiredBy: ["RealSolarSystem"],
+                candidates: [
+                  { identifier: "RSSTextures4096", name: "RSS Textures 4096", version: "1.0.0", via: "provides" },
+                  { ...chosen, via: "provides" },
+                ],
+              },
+            ],
+          });
+        }
+        return json({ ...basePlan, status: "ok", toInstall: [chosen, target], choices: [] });
+      }
+      if (url === "/api/v1/mods/RealSolarSystem/install" && init?.method === "POST") {
+        installBody = JSON.parse(String(init.body));
+        return json({
+          job: {
+            jobId: "job-rss",
+            kind: "install",
+            identifier: mod.identifier,
+            version: mod.version,
+            status: "queued",
+            phase: "queued",
+          },
+        }, 202);
+      }
+      if (url.startsWith("/api/v1/mods")) return json({ total: 1, mods: [mod] });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+    await wrapper.findAll("button").find((button) => button.text() === "Browse mods")!.trigger("click");
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Real Solar System"));
+    await wrapper.findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(wrapper.find('input[value="RSSTextures8192"]').exists()).toBe(true));
+    await wrapper.find('input[value="RSSTextures8192"]').setValue(true);
+    await wrapper.findAll("button").find((button) => button.text() === "Continue")!.trigger("click");
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Install required dependencies?"));
+    await wrapper.findAll("button").find((button) => button.text() === "Install automatically")!.trigger("click");
+
+    await vi.waitFor(() => expect(installBody).toBeDefined());
+    expect(planBodies[1]).toEqual({ version: "1.0.0", choices: { RSSTextures: "RSSTextures8192" } });
+    expect(installBody).toEqual({
+      version: "1.0.0",
+      installDependencies: true,
+      choices: { RSSTextures: "RSSTextures8192" },
+    });
+  });
+
   it("shows a connected local service", async () => {
     vi.stubGlobal(
       "fetch",

@@ -60,7 +60,7 @@ const installedMods = ref<InstalledMod[]>([]);
 const availableUpdates = ref<AvailableUpdate[]>([]);
 const pendingInstallIdentifiers = ref<string[]>([]);
 const uninstallingIdentifier = ref<string>();
-const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse }>();
+const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse; choices: Record<string, string> }>();
 const selectedMod = ref<CkanModule>();
 const selectedModVersions = ref<CkanModule[]>([]);
 const isLoadingVersions = ref(false);
@@ -313,32 +313,51 @@ async function onInstall(mod: CkanModule): Promise<void> {
   setInstallPending(mod.identifier, true);
   errorMessage.value = undefined;
   dependencyPrompt.value = undefined;
+  await planAndApply(mod, {});
+}
+
+async function planAndApply(mod: CkanModule, choices: Record<string, string>): Promise<void> {
   try {
-    const plan = await planModInstall(mod.identifier, mod.version);
-    if (plan.status === "blocked") {
-      const details = [
-        ...plan.conflicts.map((entry) => entry.message),
-        ...plan.unmet.map((entry) => entry.message),
-      ].join(" ");
-      errorMessage.value = details.length > 0 ? details : "Install plan is blocked by dependencies or conflicts.";
-      status.value = "error";
-      setInstallPending(mod.identifier, false);
-      return;
-    }
-
-    const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
-    if (missing.length > 0) {
-      setInstallPending(mod.identifier, false);
-      dependencyPrompt.value = { mod, plan };
-      return;
-    }
-
-    await startInstallJob(mod, false);
+    const plan = await planModInstall(mod.identifier, mod.version, choices);
+    await applyPlan(mod, plan, choices);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "Install could not be planned.";
     status.value = "error";
     setInstallPending(mod.identifier, false);
   }
+}
+
+async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Record<string, string>): Promise<void> {
+  if (plan.status === "blocked") {
+    const details = [
+      ...plan.conflicts.map((entry) => entry.message),
+      ...plan.unmet.map((entry) => entry.message),
+    ].join(" ");
+    errorMessage.value = details.length > 0 ? details : "Install plan is blocked by dependencies or conflicts.";
+    status.value = "error";
+    setInstallPending(mod.identifier, false);
+    return;
+  }
+
+  const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
+  if (plan.status === "choice-required" || missing.length > 0) {
+    setInstallPending(mod.identifier, false);
+    dependencyPrompt.value = { mod, plan, choices };
+    return;
+  }
+
+  await startInstallJob(mod, false);
+}
+
+async function continueWithChoices(choices: Record<string, string>): Promise<void> {
+  const prompt = dependencyPrompt.value;
+  if (prompt === undefined) {
+    return;
+  }
+  dependencyPrompt.value = undefined;
+  setInstallPending(prompt.mod.identifier, true);
+  errorMessage.value = undefined;
+  await planAndApply(prompt.mod, choices);
 }
 
 async function confirmDependencyInstall(): Promise<void> {
@@ -347,7 +366,7 @@ async function confirmDependencyInstall(): Promise<void> {
     return;
   }
   dependencyPrompt.value = undefined;
-  await startInstallJob(prompt.mod, true);
+  await startInstallJob(prompt.mod, true, prompt.choices);
 }
 
 function cancelDependencyInstall(): void {
@@ -358,11 +377,15 @@ function cancelDependencyInstall(): void {
   }
 }
 
-async function startInstallJob(mod: CkanModule, installDependencies: boolean): Promise<void> {
+async function startInstallJob(
+  mod: CkanModule,
+  installDependencies: boolean,
+  choices: Record<string, string> = {},
+): Promise<void> {
   setInstallPending(mod.identifier, true);
   errorMessage.value = undefined;
   try {
-    const accepted = await installMod(mod.identifier, mod.version, installDependencies);
+    const accepted = await installMod(mod.identifier, mod.version, installDependencies, choices);
     addInstallJob(accepted.job);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "Install could not be started.";
@@ -475,6 +498,7 @@ onMounted(loadSetup);
       @update:page="onUpdateModPage"
       @reset-filters="resetModFilters"
       @confirm-dependency-install="confirmDependencyInstall"
+      @continue-with-choices="continueWithChoices"
       @cancel-dependency-install="cancelDependencyInstall"
     />
   </AppShell>

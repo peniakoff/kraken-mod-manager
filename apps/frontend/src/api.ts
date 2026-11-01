@@ -112,11 +112,19 @@ export async function getUpdates(): Promise<UpdatesResponse> {
   return request("/api/v1/updates", updatesResponseSchema);
 }
 
-export async function planModInstall(identifier: string, version?: string): Promise<InstallPlanResponse> {
+function choicesBody(choices: Record<string, string> | undefined): { choices?: Record<string, string> } {
+  return choices !== undefined && Object.keys(choices).length > 0 ? { choices } : {};
+}
+
+export async function planModInstall(
+  identifier: string,
+  version?: string,
+  choices?: Record<string, string>,
+): Promise<InstallPlanResponse> {
   return request(`/api/v1/mods/${encodeURIComponent(identifier)}/plan`, installPlanResponseSchema, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(version === undefined ? {} : { version }),
+    body: JSON.stringify({ ...(version === undefined ? {} : { version }), ...choicesBody(choices) }),
   });
 }
 
@@ -124,6 +132,7 @@ export async function installMod(
   identifier: string,
   version?: string,
   installDependencies = false,
+  choices?: Record<string, string>,
 ): Promise<InstallAcceptedResponse> {
   return request(`/api/v1/mods/${encodeURIComponent(identifier)}/install`, installAcceptedResponseSchema, {
     method: "POST",
@@ -131,6 +140,7 @@ export async function installMod(
     body: JSON.stringify({
       ...(version === undefined ? {} : { version }),
       installDependencies,
+      ...choicesBody(choices),
     }),
   });
 }
