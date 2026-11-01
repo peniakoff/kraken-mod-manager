@@ -13,6 +13,8 @@ export interface ManagedModRecord {
   version: string;
   installationPath: string;
   files: string[];
+  /** True when Kraken installed the mod only to satisfy another mod's dependency. */
+  autoInstalled: boolean;
 }
 
 export interface InstalledModSummary {

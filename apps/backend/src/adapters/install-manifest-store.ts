@@ -3,9 +3,12 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface StoredInstallManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mods: ManagedModRecord[];
 }
+
+/** v1 records predate the auto-installed flag. */
+type ManagedModRecordV1 = Omit<ManagedModRecord, "autoInstalled">;
 
 export class InstallManifestError extends Error {
   constructor(message: string) {
@@ -23,17 +26,26 @@ export class InstallManifestStore {
       contents = await readFile(this.filePath, "utf8");
     } catch (error: unknown) {
       if (isMissingFile(error)) {
-        return { schemaVersion: 1, mods: [] };
+        return { schemaVersion: 2, mods: [] };
       }
       throw new InstallManifestError(`Could not read install manifest: ${getErrorMessage(error)}`);
     }
 
     try {
       const manifest: unknown = JSON.parse(contents);
-      if (!isStoredInstallManifest(manifest)) {
-        throw new Error("unsupported install manifest format");
+      if (isStoredInstallManifest(manifest)) {
+        return manifest;
       }
-      return manifest;
+      if (isInstallManifestV1(manifest)) {
+        // The manifest is user data, so v1 is upgraded in memory and persisted
+        // as v2 on the next write. `false` never offers a mod the user may have
+        // picked themselves for orphan cleanup.
+        return {
+          schemaVersion: 2,
+          mods: manifest.mods.map((mod) => ({ ...mod, autoInstalled: false })),
+        };
+      }
+      throw new Error("unsupported install manifest format");
     } catch (error: unknown) {
       throw new InstallManifestError(`Install manifest is malformed: ${getErrorMessage(error)}`);
     }
@@ -66,19 +78,38 @@ function isStoredInstallManifest(value: unknown): value is StoredInstallManifest
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
+  // Safe: only read through Partial and every field is checked below.
   const manifest = value as Partial<StoredInstallManifest>;
   return (
-    manifest.schemaVersion === 1 &&
+    manifest.schemaVersion === 2 &&
     Array.isArray(manifest.mods) &&
     manifest.mods.every(isManagedModRecord)
   );
 }
 
-function isManagedModRecord(value: unknown): value is ManagedModRecord {
+function isInstallManifestV1(value: unknown): value is { schemaVersion: 1; mods: ManagedModRecordV1[] } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const record = value as Partial<ManagedModRecord>;
+  // Safe: only read through Partial and every field is checked below.
+  const manifest = value as { schemaVersion?: unknown; mods?: unknown };
+  return manifest.schemaVersion === 1 && Array.isArray(manifest.mods) && manifest.mods.every(isManagedModRecordV1);
+}
+
+function isManagedModRecord(value: unknown): value is ManagedModRecord {
+  return (
+    isManagedModRecordV1(value) &&
+    // Safe: isManagedModRecordV1 established a non-null object.
+    typeof (value as Partial<ManagedModRecord>).autoInstalled === "boolean"
+  );
+}
+
+function isManagedModRecordV1(value: unknown): value is ManagedModRecordV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  // Safe: only read through Partial and every field is checked below.
+  const record = value as Partial<ManagedModRecordV1>;
   return (
     typeof record.identifier === "string" &&
     record.identifier.length > 0 &&

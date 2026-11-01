@@ -151,7 +151,7 @@ export class InstallService {
         } catch (error: unknown) {
           const remainingFiles = record.files.filter((file) => remaining.has(file));
           await this.manifestStore.write({
-            schemaVersion: 1,
+            schemaVersion: 2,
             mods:
               remainingFiles.length === 0
                 ? manifest.mods.filter((mod) => mod !== record)
@@ -161,7 +161,7 @@ export class InstallService {
         }
 
         await this.manifestStore.write({
-          schemaVersion: 1,
+          schemaVersion: 2,
           mods: manifest.mods.filter((mod) => mod !== record),
         });
       });
@@ -191,7 +191,8 @@ export class InstallService {
           modulesToInstall.length > 1
             ? ` (${index + 1}/${modulesToInstall.length}: ${module.identifier})`
             : "";
-        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel);
+        const isTarget = module.identifier === target.identifier;
+        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isTarget);
         completed.push(snapshot);
       }
 
@@ -284,6 +285,7 @@ export class InstallService {
     kspPath: string,
     module: CkanModule,
     stepLabel: string,
+    isTarget: boolean,
   ): Promise<ModuleInstallSnapshot> {
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
@@ -367,12 +369,15 @@ export class InstallService {
           version: module.version,
           installationPath: canonicalRoot,
           files: installedFiles,
+          // A reinstall or update keeps the flag, so updating an auto-installed
+          // dependency does not turn it into a manual install.
+          autoInstalled: previous?.autoInstalled ?? !isTarget,
         };
         const nextMods = manifest.mods.filter(
           (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
         );
         nextMods.push(record);
-        await this.manifestStore.write({ schemaVersion: 1, mods: nextMods });
+        await this.manifestStore.write({ schemaVersion: 2, mods: nextMods });
         return {
           identifier: module.identifier,
           installationPath: canonicalRoot,
@@ -402,7 +407,7 @@ export class InstallService {
         await this.rollbackInstall(canonicalRoot, snapshot.installedFiles, snapshot.previousFiles);
         if (snapshot.previousRecord === undefined) {
           manifest = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             mods: manifest.mods.filter(
               (mod) =>
                 mod.identifier !== snapshot.identifier || mod.installationPath !== snapshot.installationPath,
@@ -414,7 +419,7 @@ export class InstallService {
             (mod) => mod.identifier !== restored.identifier || mod.installationPath !== restored.installationPath,
           );
           without.push(restored);
-          manifest = { schemaVersion: 1, mods: without };
+          manifest = { schemaVersion: 2, mods: without };
         }
         await this.manifestStore.write(manifest);
       }

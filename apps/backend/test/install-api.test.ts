@@ -282,6 +282,24 @@ async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
   throw new Error("job did not finish");
 }
 
+interface StoredManifestFile {
+  schemaVersion: number;
+  mods: Array<{ identifier: string; installationPath: string; autoInstalled?: boolean }>;
+}
+
+function readManifestFile(home: string): StoredManifestFile {
+  // The on-disk format is the contract under test, so read the raw file.
+  return JSON.parse(readFileSync(join(home, "data", "install-manifest.json"), "utf8")) as StoredManifestFile;
+}
+
+function manifestRecord(home: string, identifier: string) {
+  const record = readManifestFile(home).mods.find((mod) => mod.identifier === identifier);
+  if (record === undefined) {
+    throw new Error(`manifest has no record for ${identifier}`);
+  }
+  return record;
+}
+
 describe("mod install API", () => {
   it("installs, inventories, and uninstalls a managed mod", async () => {
     const { app, ksp } = await createInstallTestApp();
@@ -691,6 +709,53 @@ describe("mod install API", () => {
     expect(inventory.body.mods.some((mod: { identifier: string }) => mod.identifier === "BrokenDependent")).toBe(
       false,
     );
+  });
+
+  it("marks dependencies as auto-installed and the target as manual", async () => {
+    const { app, home } = await createInstallTestApp();
+    const accepted = await request(app)
+      .post("/api/v1/mods/DependentMod/install")
+      .send({ installDependencies: true });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    expect(readManifestFile(home).schemaVersion).toBe(2);
+    expect(manifestRecord(home, "ModuleManager").autoInstalled).toBe(true);
+    expect(manifestRecord(home, "DependentMod").autoInstalled).toBe(false);
+  });
+
+  it("keeps the auto-installed flag when a dependency is reinstalled directly", async () => {
+    const { app, home } = await createInstallTestApp();
+    const withDependencies = await request(app)
+      .post("/api/v1/mods/DependentMod/install")
+      .send({ installDependencies: true });
+    expect((await waitForJob(app, withDependencies.body.job.jobId)).status).toBe("succeeded");
+
+    const direct = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect((await waitForJob(app, direct.body.job.jobId)).status).toBe("succeeded");
+
+    expect(manifestRecord(home, "ModuleManager").autoInstalled).toBe(true);
+  });
+
+  it("migrates a v1 install manifest without losing records", async () => {
+    const { app, home } = await createInstallTestApp();
+    const first = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    expect((await waitForJob(app, first.body.job.jobId)).status).toBe("succeeded");
+
+    const v1Mods = readManifestFile(home).mods.map(({ autoInstalled: _autoInstalled, ...record }) => record);
+    writeFileSync(join(home, "data", "install-manifest.json"), JSON.stringify({ schemaVersion: 1, mods: v1Mods }));
+
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.status).toBe(200);
+    expect(inventory.body.mods).toEqual([
+      expect.objectContaining({ identifier: "ExampleMod", status: "managed" }),
+    ]);
+
+    const second = await request(app).post("/api/v1/mods/AnotherMod/install").send({});
+    expect((await waitForJob(app, second.body.job.jobId)).status).toBe("succeeded");
+
+    expect(readManifestFile(home).schemaVersion).toBe(2);
+    expect(manifestRecord(home, "ExampleMod").autoInstalled).toBe(false);
+    expect(manifestRecord(home, "AnotherMod").autoInstalled).toBe(false);
   });
 
   it("lists available updates for managed mods with older versions", async () => {
