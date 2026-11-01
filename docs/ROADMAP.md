@@ -107,9 +107,12 @@
         *   Windows (`kraken-mod-manager-win-x64.exe`)
         *   Linux (`kraken-mod-manager-linux-x64`)
         *   macOS (`kraken-mod-manager-macos-x64 / arm64`)
-    *   Add the full per-platform build matrix, signing, and release artifacts; 7.1 currently proves the host-platform pipeline.
+    *   [x] CI builds and smoke-tests all four binaries on native runners and uploads them as workflow artifacts.
+    *   [ ] Code signing (Apple Developer ID with notarization, Windows Authenticode); binaries are unsigned until then.
 - [ ] **7.3. Cross-Platform Testing:**
     *   Verify the executables run correctly on fresh VMs without Node.js installed.
+    *   [x] Linux: CI runs the binary in a `debian:bookworm-slim` container without Node.js.
+    *   [ ] Windows and macOS: manual check on clean machines before v1.0.0 (GitHub runners ship with Node.js).
 
 ## Phase 8: Release & Maintenance (v1.0.0)
 - [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
