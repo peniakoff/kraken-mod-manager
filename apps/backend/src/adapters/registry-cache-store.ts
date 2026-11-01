@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface StoredRegistryCache {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sourceUrl: string;
   updatedAt: string;
   parseErrors: number;
@@ -33,6 +33,11 @@ export class RegistryCacheStore {
 
     try {
       const cache: unknown = JSON.parse(contents);
+      if (isOutdatedRegistryCache(cache)) {
+        // v1 caches predate `provides` parsing, so their modules cannot resolve virtual packages.
+        console.warn("Ignoring outdated registry cache (schema v1); refresh the registry to rebuild it.");
+        return undefined;
+      }
       if (!isStoredRegistryCache(cache)) {
         throw new Error("unsupported registry cache format");
       }
@@ -44,7 +49,7 @@ export class RegistryCacheStore {
 
   async write(snapshot: RegistrySnapshot): Promise<void> {
     const cache: StoredRegistryCache = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       sourceUrl: snapshot.sourceUrl,
       updatedAt: snapshot.updatedAt,
       parseErrors: snapshot.parseErrors,
@@ -72,13 +77,17 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isOutdatedRegistryCache(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "schemaVersion" in value && value.schemaVersion === 1;
+}
+
 function isStoredRegistryCache(value: unknown): value is StoredRegistryCache {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const cache = value as Partial<StoredRegistryCache>;
   return (
-    cache.schemaVersion === 1 &&
+    cache.schemaVersion === 2 &&
     typeof cache.sourceUrl === "string" &&
     cache.sourceUrl.length > 0 &&
     typeof cache.updatedAt === "string" &&

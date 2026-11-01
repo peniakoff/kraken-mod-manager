@@ -12,11 +12,11 @@ import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { HttpPort, PlatformPort } from "@kraken/core";
 import { gzipSync } from "node:zlib";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 function fixtureArchive(): Uint8Array {
   const tar = packUstar([
@@ -122,6 +122,41 @@ describe("CKAN registry API", () => {
     const emptyMods = await request(app).get("/api/v1/mods");
     expect(emptyMods.status).toBe(200);
     expect(emptyMods.body).toEqual({ total: 0, mods: [] });
+  });
+
+  it("treats a schema v1 registry cache as missing", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await mkdir(join(home, "cache"), { recursive: true });
+    await writeFile(
+      join(home, "cache", "registry.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceUrl: "https://example.test/CKAN-meta.tar.gz",
+        updatedAt: "2026-09-14T21:39:00.000Z",
+        parseErrors: 0,
+        modules: [],
+      }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const registry = await request(app).get("/api/v1/registry");
+      expect(registry.status).toBe(200);
+      expect(registry.body).toEqual({ status: "missing", moduleCount: 0 });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toMatch(/outdated registry cache/i);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("still rejects a malformed registry cache", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await mkdir(join(home, "cache"), { recursive: true });
+    await writeFile(join(home, "cache", "registry.json"), JSON.stringify({ schemaVersion: 99 }));
+
+    const registry = await request(app).get("/api/v1/registry");
+    expect(registry.body.code).toBe("REGISTRY_CACHE_ERROR");
   });
 
   it("refreshes, caches, searches, and restores from disk", async () => {
