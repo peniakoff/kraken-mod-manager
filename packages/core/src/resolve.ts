@@ -10,8 +10,9 @@ import {
   type CkanSingleRelationship,
 } from "./ckan.js";
 import type { InstalledModSummary } from "./install.js";
+import { ProviderIndex, versionInRange, type ProviderCandidate } from "./providers.js";
 
-export type InstallPlanStatus = "ok" | "blocked";
+export type InstallPlanStatus = "ok" | "choice-required" | "blocked";
 
 export interface InstallPlanModuleRef {
   identifier: string;
@@ -48,6 +49,18 @@ export interface InstallPlanOptional {
   requiredBy: string;
 }
 
+export interface InstallPlanChoiceCandidate extends InstallPlanModuleRef {
+  via: "identifier" | "provides";
+}
+
+/** A dependency several modules can satisfy; the user picks one by `key`. */
+export interface InstallPlanChoice {
+  key: string;
+  label: string;
+  requiredBy: string[];
+  candidates: InstallPlanChoiceCandidate[];
+}
+
 export interface InstallPlan {
   status: InstallPlanStatus;
   target: InstallPlanModuleRef;
@@ -56,6 +69,7 @@ export interface InstallPlan {
   conflicts: InstallPlanConflict[];
   unmet: InstallPlanUnmet[];
   optional: InstallPlanOptional[];
+  choices: InstallPlanChoice[];
 }
 
 export interface ResolveInstallPlanOptions {
@@ -63,11 +77,20 @@ export interface ResolveInstallPlanOptions {
   /** All known registry modules (all versions). */
   registryModules: readonly CkanModule[];
   inventory: readonly InstalledModSummary[];
+  /** User-selected provider identifiers keyed by `InstallPlanChoice.key`. */
+  choices?: Readonly<Record<string, string>>;
+}
+
+interface PendingChoice {
+  choice: InstallPlanChoice;
+  relation: CkanSingleRelationship;
+  requiredBy: Set<string>;
 }
 
 export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallPlan {
-  const { target, registryModules, inventory } = options;
+  const { target, registryModules, inventory, choices = {} } = options;
   const byIdentifier = indexByIdentifier(registryModules);
+  const providers = new ProviderIndex(registryModules);
   const installed = new Map(inventory.map((mod) => [mod.identifier, mod]));
 
   const planned = new Map<string, CkanModule>();
@@ -75,6 +98,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   const conflicts: InstallPlanConflict[] = [];
   const unmet: InstallPlanUnmet[] = [];
   const optional: InstallPlanOptional[] = [];
+  const pendingChoices = new Map<string, PendingChoice>();
   const satisfiedNames = new Set<string>();
   const visiting = new Set<string>();
 
@@ -89,6 +113,27 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       ...(mod.version !== undefined ? { version: mod.version } : {}),
       reason,
     });
+  }
+
+  function installedMetadata(mod: InstalledModSummary): CkanModule | undefined {
+    return findInstalledMetadata(byIdentifier.get(mod.identifier) ?? [], mod);
+  }
+
+  function findInstalledSatisfier(relation: CkanSingleRelationship): InstalledModSummary | undefined {
+    const direct = installed.get(relation.name);
+    if (direct !== undefined && versionMatchesInstalled(direct, relation, "depends")) {
+      return direct;
+    }
+    for (const mod of installed.values()) {
+      if (mod === direct) {
+        continue;
+      }
+      const meta = installedMetadata(mod);
+      if (meta !== undefined && meta.provides.includes(relation.name) && versionMatchesInstalled(mod, relation, "depends")) {
+        return mod;
+      }
+    }
+    return undefined;
   }
 
   function collectOptional(module: CkanModule): void {
@@ -164,8 +209,8 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   }
 
   function checkInstalledModuleConflicts(): void {
-    for (const [identifier, installedMod] of installed) {
-      const meta = findInstalledMetadata(byIdentifier.get(identifier) ?? [], installedMod);
+    for (const installedMod of installed.values()) {
+      const meta = installedMetadata(installedMod);
       if (meta === undefined) {
         continue;
       }
@@ -192,6 +237,98 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     }
   }
 
+  function planModule(module: CkanModule): void {
+    planned.set(module.identifier, module);
+    resolveDepends(module);
+  }
+
+  function addPendingChoice(
+    key: string,
+    label: string,
+    relation: CkanSingleRelationship,
+    requiredBy: string,
+    candidates: readonly ProviderCandidate[],
+  ): void {
+    const existing = pendingChoices.get(key);
+    if (existing !== undefined) {
+      existing.requiredBy.add(requiredBy);
+      return;
+    }
+    pendingChoices.set(key, {
+      relation,
+      requiredBy: new Set([requiredBy]),
+      choice: {
+        key,
+        label,
+        requiredBy: [],
+        candidates: candidates.map((candidate) => ({ ...toRef(candidate.module), via: candidate.via })),
+      },
+    });
+  }
+
+  function resolveSingle(module: CkanModule, relation: CkanSingleRelationship): void {
+    if (ProviderIndex.satisfiesName(module, relation.name)) {
+      return;
+    }
+
+    const installedMatch = findInstalledSatisfier(relation);
+    if (installedMatch !== undefined) {
+      noteSatisfied(installedMatch, installedMatch.status);
+      return;
+    }
+
+    const plannedByName = planned.get(relation.name);
+    if (plannedByName !== undefined && !versionMatchesModule(plannedByName, relation)) {
+      unmet.push({
+        name: relation.name,
+        ...rangeOf(relation),
+        requiredBy: module.identifier,
+        message: `Planned ${relation.name} ${plannedByName.version} does not satisfy constraints required by ${module.identifier}.`,
+      });
+      return;
+    }
+    for (const candidate of [...planned.values(), target]) {
+      if (ProviderIndex.satisfiesName(candidate, relation.name) && versionMatchesModule(candidate, relation)) {
+        return;
+      }
+    }
+
+    const key = relation.name;
+    const candidates = providers.candidates(relation);
+    // Object.hasOwn keeps keys like "constructor" from resolving to prototype members.
+    const chosen = Object.hasOwn(choices, key) ? choices[key] : undefined;
+    if (chosen !== undefined) {
+      const pick = candidates.find((candidate) => candidate.module.identifier === chosen);
+      if (pick === undefined) {
+        unmet.push({
+          name: relation.name,
+          ...rangeOf(relation),
+          requiredBy: module.identifier,
+          message: `${chosen} is not a provider of ${key} compatible with ${module.identifier}.`,
+        });
+        return;
+      }
+      planModule(pick.module);
+      return;
+    }
+
+    const [only, ...others] = candidates;
+    if (only === undefined) {
+      unmet.push({
+        name: relation.name,
+        ...rangeOf(relation),
+        requiredBy: module.identifier,
+        message: `No compatible version of ${relation.name} found in the registry for ${module.identifier}.`,
+      });
+      return;
+    }
+    if (others.length === 0) {
+      planModule(only.module);
+      return;
+    }
+    addPendingChoice(key, key, relation, module.identifier, candidates);
+  }
+
   function resolveDepends(module: CkanModule): void {
     if (visiting.has(module.identifier)) {
       return;
@@ -200,60 +337,26 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     collectOptional(module);
     checkConflicts(module);
 
-    const depends = module.relationships?.depends ?? [];
-    for (const relation of depends) {
-      if (relation.kind !== "single") {
-        const reason = describeUnresolvable(relation);
-        unmet.push({
-          name: reason,
-          requiredBy: module.identifier,
-          message: `${module.identifier} has an unsupported dependency relationship (${reason}) that Kraken cannot resolve yet.`,
-        });
-        continue;
-      }
-
-      if (relation.name === module.identifier) {
-        continue;
-      }
-
-      const installedMatch = installed.get(relation.name);
-      if (installedMatch !== undefined && versionMatchesInstalled(installedMatch, relation, "depends")) {
-        noteSatisfied(installedMatch, installedMatch.status);
-        continue;
-      }
-
-      const plannedMatch = planned.get(relation.name);
-      if (plannedMatch !== undefined) {
-        if (!versionMatchesModule(plannedMatch, relation)) {
+    for (const relation of module.relationships?.depends ?? []) {
+      switch (relation.kind) {
+        case "single":
+          resolveSingle(module, relation);
+          break;
+        case "anyOf":
+        case "unsupported": {
+          const reason = describeUnresolvable(relation);
           unmet.push({
-            name: relation.name,
-            ...(relation.minVersion !== undefined ? { minVersion: relation.minVersion } : {}),
-            ...(relation.maxVersion !== undefined ? { maxVersion: relation.maxVersion } : {}),
+            name: reason,
             requiredBy: module.identifier,
-            message: `Planned ${relation.name} ${plannedMatch.version} does not satisfy constraints required by ${module.identifier}.`,
+            message: `${module.identifier} has an unsupported dependency relationship (${reason}) that Kraken cannot resolve yet.`,
           });
+          break;
         }
-        continue;
+        default: {
+          const exhaustive: never = relation;
+          throw new Error(`Unknown relationship kind: ${JSON.stringify(exhaustive)}`);
+        }
       }
-
-      if (relation.name === target.identifier && versionMatchesModule(target, relation)) {
-        continue;
-      }
-
-      const candidate = pickLatestCompatible(byIdentifier.get(relation.name) ?? [], relation);
-      if (candidate === undefined) {
-        unmet.push({
-          name: relation.name,
-          ...(relation.minVersion !== undefined ? { minVersion: relation.minVersion } : {}),
-          ...(relation.maxVersion !== undefined ? { maxVersion: relation.maxVersion } : {}),
-          requiredBy: module.identifier,
-          message: `No compatible version of ${relation.name} found in the registry for ${module.identifier}.`,
-        });
-        continue;
-      }
-
-      planned.set(candidate.identifier, candidate);
-      resolveDepends(candidate);
     }
 
     visiting.delete(module.identifier);
@@ -262,11 +365,22 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   resolveDepends(target);
   checkInstalledModuleConflicts();
 
-  // Target is always part of the install set (reinstall / primary install).
-  const toInstallModules = [...planned.values(), target];
-  const toInstall = topologicalInstallOrder(toInstallModules);
+  // A choice raised early can be settled by a provider planned later in the walk.
+  const choicesOut: InstallPlanChoice[] = [];
+  for (const pending of pendingChoices.values()) {
+    const settled = [...planned.values(), target].some(
+      (module) => ProviderIndex.satisfiesName(module, pending.relation.name) && versionMatchesModule(module, pending.relation),
+    );
+    if (!settled) {
+      choicesOut.push({ ...pending.choice, requiredBy: [...pending.requiredBy].sort((left, right) => left.localeCompare(right)) });
+    }
+  }
 
-  const status: InstallPlanStatus = conflicts.length > 0 || unmet.length > 0 ? "blocked" : "ok";
+  // Target is always part of the install set (reinstall / primary install).
+  const toInstall = topologicalInstallOrder([...planned.values(), target]);
+
+  const status: InstallPlanStatus =
+    conflicts.length > 0 || unmet.length > 0 ? "blocked" : choicesOut.length > 0 ? "choice-required" : "ok";
 
   return {
     status,
@@ -276,6 +390,14 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     conflicts,
     unmet,
     optional,
+    choices: choicesOut,
+  };
+}
+
+function rangeOf(relation: CkanSingleRelationship): { minVersion?: string; maxVersion?: string } {
+  return {
+    ...(relation.minVersion !== undefined ? { minVersion: relation.minVersion } : {}),
+    ...(relation.maxVersion !== undefined ? { maxVersion: relation.maxVersion } : {}),
   };
 }
 
@@ -290,16 +412,6 @@ function indexByIdentifier(modules: readonly CkanModule[]): Map<string, CkanModu
     }
   }
   return map;
-}
-
-function pickLatestCompatible(candidates: readonly CkanModule[], relation: CkanSingleRelationship): CkanModule | undefined {
-  const matching = candidates.filter((module) => versionMatchesModule(module, relation));
-  if (matching.length === 0) {
-    return undefined;
-  }
-  return matching.reduce((best, current) =>
-    compareCkanVersions(current.version, best.version) > 0 ? current : best,
-  );
 }
 
 function findInstalledMetadata(
@@ -340,16 +452,6 @@ function versionMatchesInstalled(
   return versionInRange(mod.version, relation.minVersion, relation.maxVersion);
 }
 
-function versionInRange(version: string, minVersion?: string, maxVersion?: string): boolean {
-  if (minVersion !== undefined && compareCkanVersions(version, minVersion) < 0) {
-    return false;
-  }
-  if (maxVersion !== undefined && compareCkanVersions(version, maxVersion) > 0) {
-    return false;
-  }
-  return true;
-}
-
 function describeUnresolvable(relation: Exclude<CkanRelationship, CkanSingleRelationship>): string {
   switch (relation.kind) {
     case "anyOf":
@@ -361,6 +463,18 @@ function describeUnresolvable(relation: Exclude<CkanRelationship, CkanSingleRela
       throw new Error(`Unknown relationship kind: ${JSON.stringify(exhaustive)}`);
     }
   }
+}
+
+function dependencyNames(module: CkanModule): string[] {
+  const names: string[] = [];
+  for (const relation of module.relationships?.depends ?? []) {
+    if (relation.kind === "single") {
+      names.push(relation.name);
+    } else if (relation.kind === "anyOf") {
+      names.push(...relation.alternatives.map((alternative) => alternative.name));
+    }
+  }
+  return names;
 }
 
 function toRef(module: CkanModule): InstallPlanModuleRef {
@@ -387,11 +501,16 @@ function topologicalInstallOrder(modules: readonly CkanModule[]): InstallPlanMod
   }
 
   for (const module of modules) {
-    for (const dep of module.relationships?.depends ?? []) {
-      if (dep.kind !== "single" || !ids.has(dep.name) || dep.name === module.identifier) {
-        continue;
+    const providerIds = new Set<string>();
+    for (const name of dependencyNames(module)) {
+      for (const candidate of modules) {
+        if (candidate.identifier !== module.identifier && ProviderIndex.satisfiesName(candidate, name)) {
+          providerIds.add(candidate.identifier);
+        }
       }
-      edges.get(dep.name)?.push(module.identifier);
+    }
+    for (const providerId of providerIds) {
+      edges.get(providerId)?.push(module.identifier);
       indegree.set(module.identifier, (indegree.get(module.identifier) ?? 0) + 1);
     }
   }

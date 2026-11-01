@@ -6,6 +6,7 @@ function mod(partial) {
   return {
     authors: ["Tester"],
     tags: ["plugin"],
+    provides: [],
     ...partial,
   };
 }
@@ -234,4 +235,226 @@ test("blocks when an installed mod declares a conflict with the target", () => {
   assert.equal(plan.conflicts.length, 1);
   assert.equal(plan.conflicts[0]?.identifier, "OldPack");
   assert.equal(plan.conflicts[0]?.conflictingWith, "FancyMod");
+});
+
+function rels(partial) {
+  return { depends: [], conflicts: [], recommends: [], suggests: [], ...partial };
+}
+
+function dep(name, range = {}) {
+  return { kind: "single", name, ...range };
+}
+
+function ids(refs) {
+  return refs.map((entry) => entry.identifier);
+}
+
+const rssTarget = mod({
+  identifier: "RealSolarSystem",
+  name: "Real Solar System",
+  version: "1.0.0",
+  relationships: rels({ depends: [dep("RSSTextures")] }),
+});
+
+function rssTextures(resolution, extra = {}) {
+  return mod({
+    identifier: `RSSTextures${resolution}`,
+    name: `RSS Textures ${resolution}`,
+    version: "1.0.0",
+    provides: ["RSSTextures"],
+    ...extra,
+  });
+}
+
+test("auto-picks the only provider of a virtual dependency", () => {
+  const provider = rssTextures(8192);
+  const plan = resolveInstallPlan({ target: rssTarget, registryModules: [rssTarget, provider], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["RSSTextures8192", "RealSolarSystem"]);
+  assert.deepEqual(plan.choices, []);
+});
+
+test("treats an installed provider as satisfying a virtual dependency", () => {
+  const provider = rssTextures(8192);
+  const plan = resolveInstallPlan({
+    target: rssTarget,
+    registryModules: [rssTarget, provider, rssTextures(4096)],
+    inventory: [{ identifier: "RSSTextures8192", version: "1.0.0", status: "managed" }],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["RealSolarSystem"]);
+  assert.equal(plan.alreadySatisfied[0]?.identifier, "RSSTextures8192");
+});
+
+test("asks for a choice when several modules provide a dependency", () => {
+  const plan = resolveInstallPlan({
+    target: rssTarget,
+    registryModules: [rssTarget, rssTextures(8192), rssTextures(4096)],
+    inventory: [],
+  });
+
+  assert.equal(plan.status, "choice-required");
+  assert.deepEqual(plan.choices, [
+    {
+      key: "RSSTextures",
+      label: "RSSTextures",
+      requiredBy: ["RealSolarSystem"],
+      candidates: [
+        { identifier: "RSSTextures4096", name: "RSS Textures 4096", version: "1.0.0", via: "provides" },
+        { identifier: "RSSTextures8192", name: "RSS Textures 8192", version: "1.0.0", via: "provides" },
+      ],
+    },
+  ]);
+  assert.deepEqual(ids(plan.toInstall), ["RealSolarSystem"]);
+});
+
+test("honours a valid choice and resolves its dependencies", () => {
+  const kopernicus = mod({ identifier: "Kopernicus", name: "Kopernicus", version: "2.0.0" });
+  const chosen = rssTextures(8192, { relationships: rels({ depends: [dep("Kopernicus")] }) });
+  const plan = resolveInstallPlan({
+    target: rssTarget,
+    registryModules: [rssTarget, chosen, rssTextures(4096), kopernicus],
+    inventory: [],
+    choices: { RSSTextures: "RSSTextures8192" },
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["Kopernicus", "RSSTextures8192", "RealSolarSystem"]);
+  assert.deepEqual(plan.choices, []);
+});
+
+test("reports an invalid choice as unmet", () => {
+  const plan = resolveInstallPlan({
+    target: rssTarget,
+    registryModules: [rssTarget, rssTextures(8192), rssTextures(4096)],
+    inventory: [],
+    choices: { RSSTextures: "SomethingElse" },
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.unmet[0]?.message ?? "", /SomethingElse is not a provider of RSSTextures/);
+});
+
+test("merges requiredBy for the same choice key", () => {
+  const scatterer = mod({
+    identifier: "Scatterer",
+    name: "Scatterer",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("RSSTextures")] }),
+  });
+  const target = mod({
+    identifier: "RSSVisuals",
+    name: "RSS Visuals",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("Scatterer"), dep("RSSTextures")] }),
+  });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, scatterer, rssTextures(8192), rssTextures(4096)],
+    inventory: [],
+  });
+
+  assert.equal(plan.status, "choice-required");
+  assert.equal(plan.choices.length, 1);
+  assert.deepEqual(plan.choices[0]?.requiredBy, ["RSSVisuals", "Scatterer"]);
+});
+
+test("terminates on a cycle through provides", () => {
+  const target = mod({
+    identifier: "A",
+    name: "A",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("VirtualX")] }),
+  });
+  const provider = mod({
+    identifier: "B",
+    name: "B",
+    version: "1.0.0",
+    provides: ["VirtualX"],
+    relationships: rels({ depends: [dep("A")] }),
+  });
+  const plan = resolveInstallPlan({ target, registryModules: [target, provider], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(new Set(ids(plan.toInstall)), new Set(["A", "B"]));
+});
+
+test("lets the target satisfy a virtual name it provides", () => {
+  const library = mod({
+    identifier: "ConfigLib",
+    name: "Config Lib",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("EVE-Config")] }),
+  });
+  const target = mod({
+    identifier: "MyVisualPack",
+    name: "My Visual Pack",
+    version: "1.0.0",
+    provides: ["EVE-Config"],
+    relationships: rels({ depends: [dep("ConfigLib")] }),
+  });
+  const otherPack = mod({ identifier: "OtherPack", name: "Other Pack", version: "1.0.0", provides: ["EVE-Config"] });
+  const plan = resolveInstallPlan({ target, registryModules: [target, library, otherPack], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.choices, []);
+  assert.deepEqual(ids(plan.toInstall), ["ConfigLib", "MyVisualPack"]);
+});
+
+test("ignores choices for keys the plan does not ask about", () => {
+  const provider = rssTextures(8192);
+  const plan = resolveInstallPlan({
+    target: rssTarget,
+    registryModules: [rssTarget, provider],
+    inventory: [],
+    choices: { Unrelated: "X" },
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.unmet, []);
+});
+
+test("lets a versionless detected provider satisfy only unranged dependencies", () => {
+  const provider = rssTextures(8192, { version: "2.0.0" });
+  const registryModules = [provider, rssTextures(4096)];
+  const inventory = [{ identifier: "RSSTextures8192", status: "detected" }];
+  const unranged = resolveInstallPlan({ target: rssTarget, registryModules: [rssTarget, ...registryModules], inventory });
+  const rangedTarget = mod({
+    identifier: "RealSolarSystem",
+    name: "Real Solar System",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("RSSTextures", { minVersion: "1.5.0" })] }),
+  });
+  const ranged = resolveInstallPlan({ target: rangedTarget, registryModules: [rangedTarget, ...registryModules], inventory });
+
+  assert.equal(unranged.status, "ok");
+  assert.equal(unranged.alreadySatisfied[0]?.identifier, "RSSTextures8192");
+  assert.equal(ranged.status, "ok");
+  assert.deepEqual(ids(ranged.toInstall), ["RSSTextures8192", "RealSolarSystem"]);
+  assert.equal(ranged.toInstall[0]?.version, "2.0.0");
+});
+
+test("limits candidates to provider versions inside the range", () => {
+  const target = mod({
+    identifier: "Consumer",
+    name: "Consumer",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("X", { minVersion: "2.0" })] }),
+  });
+  const providerA1 = mod({ identifier: "ProviderA", name: "Provider A", version: "1.0", provides: ["X"] });
+  const providerA2 = mod({ identifier: "ProviderA", name: "Provider A", version: "2.0", provides: ["X"] });
+  const providerB1 = mod({ identifier: "ProviderB", name: "Provider B", version: "1.0", provides: ["X"] });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, providerA1, providerA2, providerB1],
+    inventory: [],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.toInstall, [
+    { identifier: "ProviderA", name: "Provider A", version: "2.0" },
+    { identifier: "Consumer", name: "Consumer", version: "1.0.0" },
+  ]);
 });

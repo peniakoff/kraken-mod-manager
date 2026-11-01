@@ -47,6 +47,8 @@ export {
 export {
   resolveInstallPlan,
   type InstallPlan,
+  type InstallPlanChoice,
+  type InstallPlanChoiceCandidate,
   type InstallPlanConflict,
   type InstallPlanModuleRef,
   type InstallPlanOptional,
@@ -55,6 +57,8 @@ export {
   type InstallPlanUnmet,
   type ResolveInstallPlanOptions,
 } from "./resolve.js";
+
+export { ProviderIndex, type ProviderCandidate } from "./providers.js";
 
 export type KspPlatform = "win32" | "linux" | "darwin";
 export type InstallationSource = "steam" | "gog" | "epic" | "manual";
