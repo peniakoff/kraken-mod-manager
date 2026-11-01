@@ -81,6 +81,11 @@ Before install, Kraken can dry-run a dependency plan from CKAN `depends` /
 dependencies install first in one job (`installDependencies: true`). Optional
 `recommends` / `suggests` are reported in the plan only.
 
+Dependencies on virtual packages (`provides`) and `any_of` groups are resolved
+too. A sole candidate is picked automatically; when several mods qualify, the
+plan returns `status: "choice-required"` with the candidates, and the client
+re-plans and installs with a `choices` map (`{ "<choice key>": "<identifier>" }`).
+
 Install progress is streamed with Server-Sent Events on
 `GET /api/v1/jobs/:jobId/events`.
 

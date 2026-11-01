@@ -76,6 +76,8 @@
 - [x] **5.2. Auto-Resolution Algorithm (SAT-like Solver):**
     *   Write logic that checks if a requested mod requires other libraries (e.g., *ModuleManager*).
     *   Present a unified Vue modal: *"This mod requires Mod X and Mod Y. Install automatically?"* and add them to the installation queue.
+    *   Resolve CKAN virtual packages (`provides`) and `any_of` groups; when several mods qualify, the modal asks the user to pick one (`choice-required` plans).
+    *   Greedy resolution without backtracking: each dependency takes its latest compatible version, and a resulting conflict blocks the plan instead of searching other combinations.
 
 ## Phase 6: User Interface (Vue.js Frontend)
 *Goal: Deliver a clean, responsive, and modern UI without the overhead of Electron.*
