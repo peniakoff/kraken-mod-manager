@@ -611,6 +611,7 @@ function parseRelationshipEntry(entry: unknown): CkanRelationship | undefined {
     // Legacy / invalid nested groups — fail closed so plans cannot go green.
     return { kind: "unsupported", reason: "nested array" };
   }
+  // Safe: strings, null, non-objects and arrays were handled above, so this is a JSON object.
   const raw = entry as Record<string, unknown>;
   if (Object.hasOwn(raw, "any_of")) {
     return parseAnyOf(raw.any_of);
@@ -626,7 +627,8 @@ function parseAnyOf(value: unknown): CkanRelationship {
   for (const entry of value) {
     const alternative =
       typeof entry === "object" && entry !== null && !Array.isArray(entry)
-        ? parseSingleRelationship(entry as Record<string, unknown>)
+        ? // Safe: the guard above leaves only non-null, non-array objects, read here as untyped JSON.
+          parseSingleRelationship(entry as Record<string, unknown>)
         : undefined;
     if (alternative === undefined) {
       return { kind: "unsupported", reason: "invalid any_of alternative" };

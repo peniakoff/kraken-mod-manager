@@ -607,3 +607,131 @@ test("keeps recommends any_of as optional without installing it", () => {
   assert.deepEqual(ids(plan.toInstall), ["Target"]);
   assert.deepEqual(plan.optional, [{ kind: "recommends", name: "any_of:A|B", requiredBy: "Target" }]);
 });
+
+function overwriteFixture(dependsOrder) {
+  const b1 = mod({ identifier: "B", name: "B", version: "1", provides: ["X"] });
+  const b2 = mod({ identifier: "B", name: "B", version: "2", provides: ["X"] });
+  const c = mod({
+    identifier: "C",
+    name: "C",
+    version: "1",
+    relationships: rels({ depends: [dep("X", { minVersion: "2" })] }),
+  });
+  const deps = { b: dep("B", { maxVersion: "1" }), c: dep("C") };
+  const target = mod({
+    identifier: "T",
+    name: "T",
+    version: "1",
+    relationships: rels({ depends: dependsOrder.map((key) => deps[key]) }),
+  });
+  return resolveInstallPlan({ target, registryModules: [target, b1, b2, c], inventory: [] });
+}
+
+test("blocks instead of replacing a planned module with another version (planned first)", () => {
+  const plan = overwriteFixture(["b", "c"]);
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.unmet.map((entry) => entry.message).join(" "), /Planned B 1 does not satisfy X required by C/);
+  assert.equal(plan.toInstall.find((entry) => entry.identifier === "B")?.version, "1");
+});
+
+test("blocks instead of replacing a planned module with another version (provider first)", () => {
+  const plan = overwriteFixture(["c", "b"]);
+
+  assert.equal(plan.status, "blocked");
+});
+
+test("never replaces the target with another version to satisfy a dependency", () => {
+  const c = mod({
+    identifier: "C",
+    name: "C",
+    version: "1",
+    relationships: rels({ depends: [dep("X", { minVersion: "2" })] }),
+  });
+  const t1 = mod({
+    identifier: "T",
+    name: "T",
+    version: "1",
+    provides: ["X"],
+    relationships: rels({ depends: [dep("C")] }),
+  });
+  const t2 = mod({ identifier: "T", name: "T", version: "2", provides: ["X"] });
+  const plan = resolveInstallPlan({ target: t1, registryModules: [t1, t2, c], inventory: [] });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.unmet.map((entry) => entry.message).join(" "), /Target T 1 does not satisfy X required by C/);
+  assert.deepEqual(
+    plan.toInstall.filter((entry) => entry.identifier === "T").map((entry) => entry.version),
+    ["1"],
+  );
+});
+
+test("blocks instead of replacing a planned module through an any_of alternative", () => {
+  const b1 = mod({ identifier: "B", name: "B", version: "1" });
+  const b2 = mod({ identifier: "B", name: "B", version: "2" });
+  const c = mod({
+    identifier: "C",
+    name: "C",
+    version: "1",
+    relationships: rels({ depends: [{ kind: "anyOf", alternatives: [dep("B", { minVersion: "2" }), dep("Missing")] }] }),
+  });
+  const target = mod({
+    identifier: "T",
+    name: "T",
+    version: "1",
+    relationships: rels({ depends: [dep("B", { maxVersion: "1" }), dep("C")] }),
+  });
+  const plan = resolveInstallPlan({ target, registryModules: [target, b1, b2, c], inventory: [] });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.toInstall.find((entry) => entry.identifier === "B")?.version, "1");
+});
+
+test("resolves a nested choice across two plan iterations", () => {
+  const scattererConfig = (id) =>
+    mod({ identifier: id, name: id, version: "1.0.0", provides: ["Scatterer-config"] });
+  const sunflare = (id) =>
+    mod({
+      identifier: id,
+      name: id,
+      version: "1.0.0",
+      provides: ["Scatterer-sunflare"],
+      relationships: rels({ depends: [dep("Scatterer-config")] }),
+    });
+  const target = mod({
+    identifier: "Scatterer",
+    name: "Scatterer",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("Scatterer-sunflare")] }),
+  });
+  const registryModules = [
+    target,
+    sunflare("SunflareDefault"),
+    sunflare("SunflareRSS"),
+    scattererConfig("ConfigDefault"),
+    scattererConfig("ConfigRSS"),
+  ];
+
+  const first = resolveInstallPlan({ target, registryModules, inventory: [] });
+  assert.equal(first.status, "choice-required");
+  assert.deepEqual(first.choices.map((choice) => choice.key), ["Scatterer-sunflare"]);
+
+  const second = resolveInstallPlan({
+    target,
+    registryModules,
+    inventory: [],
+    choices: { "Scatterer-sunflare": "SunflareRSS" },
+  });
+  assert.equal(second.status, "choice-required");
+  assert.deepEqual(second.choices.map((choice) => choice.key), ["Scatterer-config"]);
+  assert.deepEqual(second.choices[0]?.requiredBy, ["SunflareRSS"]);
+
+  const third = resolveInstallPlan({
+    target,
+    registryModules,
+    inventory: [],
+    choices: { "Scatterer-sunflare": "SunflareRSS", "Scatterer-config": "ConfigRSS" },
+  });
+  assert.equal(third.status, "ok");
+  assert.deepEqual(ids(third.toInstall), ["ConfigRSS", "SunflareRSS", "Scatterer"]);
+});

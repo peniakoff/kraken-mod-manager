@@ -243,7 +243,23 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     }
   }
 
-  function planModule(module: CkanModule): void {
+  /**
+   * Plans `module` for `requiredBy`, unless another version of the same
+   * identifier is already the target or planned. Replacing it would break the
+   * constraint that chose the first version, so that is reported as unmet.
+   */
+  function planModule(module: CkanModule, requiredBy: CkanModule, label: string, range: VersionRange): void {
+    const existing = module.identifier === target.identifier ? target : planned.get(module.identifier);
+    if (existing !== undefined && existing.version !== module.version) {
+      const role = existing === target ? "Target" : "Planned";
+      unmet.push({
+        name: label,
+        ...range,
+        requiredBy: requiredBy.identifier,
+        message: `${role} ${existing.identifier} ${existing.version} does not satisfy ${label} required by ${requiredBy.identifier}.`,
+      });
+      return;
+    }
     planned.set(module.identifier, module);
     resolveDepends(module);
   }
@@ -302,7 +318,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
         });
         return;
       }
-      planModule(pick.module);
+      planModule(pick.module, module, label, range);
       return;
     }
 
@@ -317,7 +333,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       return;
     }
     if (others.length === 0) {
-      planModule(only.module);
+      planModule(only.module, module, label, range);
       return;
     }
 
@@ -433,7 +449,9 @@ function unionCandidates(groups: readonly ProviderCandidate[][]): ProviderCandid
   return [...byIdentifier.values()].sort((left, right) => left.module.identifier.localeCompare(right.module.identifier));
 }
 
-function rangeOf(relation: CkanSingleRelationship): { minVersion?: string; maxVersion?: string } {
+type VersionRange = { minVersion?: string; maxVersion?: string };
+
+function rangeOf(relation: CkanSingleRelationship): VersionRange {
   return {
     ...(relation.minVersion !== undefined ? { minVersion: relation.minVersion } : {}),
     ...(relation.maxVersion !== undefined ? { maxVersion: relation.maxVersion } : {}),

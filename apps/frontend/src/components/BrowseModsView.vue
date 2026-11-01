@@ -225,7 +225,7 @@ const offset = computed(() => props.currentPage * props.pageSize);
                 <label :for="choiceInputId(choice.key, candidate.identifier)" class="text-sm text-slate-300">
                   {{ candidate.name }}
                   <span class="font-mono text-slate-400">{{ candidate.version }}</span>
-                  <span v-if="candidate.via === 'provides'" class="ml-1 text-xs text-slate-500">provides {{ choice.label }}</span>
+                  <span v-if="candidate.via === 'provides'" class="ml-1 text-xs text-slate-400">provides {{ choice.label }}</span>
                 </label>
               </div>
             </div>
