@@ -11,7 +11,8 @@
     "test": "vitest run",
     "start": "node dist/server.cjs",
     "package:sea": "node scripts/build-sea.mjs",
-    "smoke:sea": "node scripts/smoke-sea.mjs"
+    "smoke:sea": "node scripts/smoke-sea.mjs",
+    "smoke:sea:no-node": "bash scripts/smoke-sea-no-node.sh"
   },
   "dependencies": {
     "@kraken/contracts": "workspace:*",

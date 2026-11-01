@@ -1,0 +1,17 @@
+name: Set up workspace
+description: Install the committed pnpm version, Node from .nvmrc, and the locked dependencies.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+      with:
+        version: 11.13.1
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+      env:
+        pnpm_config_trust_lockfile: "true"
