@@ -32,7 +32,8 @@ export class InstallServiceError extends Error {
       | "UNINSTALL_FAILED"
       | "JOB_NOT_FOUND"
       | "NOT_MANAGED"
-      | "PLAN_BLOCKED",
+      | "PLAN_BLOCKED"
+      | "PLAN_NOT_READY",
   ) {
     super(message);
     this.name = "InstallServiceError";
@@ -77,7 +78,12 @@ export class InstallService {
     return buildInventory(directories, managed, knownIdentifiers, knownNames);
   }
 
-  async planInstall(kspPath: string, identifier: string, version?: string): Promise<InstallPlanResponse> {
+  async planInstall(
+    kspPath: string,
+    identifier: string,
+    version?: string,
+    choices?: Readonly<Record<string, string>>,
+  ): Promise<InstallPlanResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
     const inventory = await this.listInstalled(kspPath);
@@ -85,6 +91,7 @@ export class InstallService {
       target,
       registryModules: this.registryService.listModules(),
       inventory,
+      ...(choices !== undefined ? { choices } : {}),
     });
   }
 
@@ -93,12 +100,13 @@ export class InstallService {
     identifier: string,
     version?: string,
     installDependencies = false,
+    choices?: Readonly<Record<string, string>>,
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
-    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies);
+    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies, choices);
 
     const job = this.jobStore.create(identifier, version);
     void this.runInstall(job.jobId, kspPath, target, modulesToInstall);
@@ -224,6 +232,7 @@ export class InstallService {
     kspPath: string,
     target: CkanModule,
     installDependencies: boolean,
+    choices: Readonly<Record<string, string>> | undefined,
   ): Promise<CkanModule[]> {
     if (!installDependencies) {
       if (target.download === undefined || target.download.length === 0) {
@@ -237,7 +246,14 @@ export class InstallService {
       target,
       registryModules: this.registryService.listModules(),
       inventory,
+      ...(choices !== undefined ? { choices } : {}),
     });
+    if (plan.status === "choice-required") {
+      throw new InstallServiceError(
+        `Install plan needs a choice for: ${plan.choices.map((choice) => choice.label).join(", ")}.`,
+        "PLAN_NOT_READY",
+      );
+    }
     if (plan.status === "blocked") {
       const details = [
         ...plan.conflicts.map((entry) => entry.message),

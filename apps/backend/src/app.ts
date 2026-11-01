@@ -346,7 +346,12 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
         return;
       }
-      const plan = await dependencies.installService.planInstall(kspPath, identifier, body.data.version);
+      const plan = await dependencies.installService.planInstall(
+        kspPath,
+        identifier,
+        body.data.version,
+        body.data.choices,
+      );
       response.json(installPlanResponseSchema.parse(plan));
     } catch (error) {
       next(error);
@@ -376,6 +381,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         identifier,
         body.data.version,
         body.data.installDependencies,
+        body.data.choices,
       );
       response.status(202).json(installAcceptedResponseSchema.parse({ job }));
     } catch (error) {
@@ -545,7 +551,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
     if (error instanceof InstallServiceError) {
       const status =
-        error.code === "NOT_CONFIGURED"
+        error.code === "NOT_CONFIGURED" || error.code === "PLAN_NOT_READY"
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404

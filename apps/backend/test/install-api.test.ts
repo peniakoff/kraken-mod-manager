@@ -153,6 +153,36 @@ function fixtureMetaArchive(
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "AnotherMod" }],
       }),
     },
+    {
+      path: "CKAN-meta-master/RealSolarSystem/RealSolarSystem-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "RealSolarSystem",
+        name: "Real Solar System",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/RealSolarSystem.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        depends: [{ name: "RSSTextures" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "RealSolarSystem" }],
+      }),
+    },
+    ...[4096, 8192].map((resolution) => ({
+      path: `CKAN-meta-master/RSSTextures${resolution}/RSSTextures${resolution}-1.0.0.ckan`,
+      content: JSON.stringify({
+        identifier: `RSSTextures${resolution}`,
+        name: `RSS Textures ${resolution}`,
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        provides: ["RSSTextures"],
+        download: `https://example.test/RSSTextures${resolution}.zip`,
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: `RSSTextures${resolution}` }],
+      }),
+    })),
   ]);
   return new Uint8Array(gzipSync(tar));
 }
@@ -189,7 +219,10 @@ async function createInstallTestApp() {
       url === "https://example.test/ExampleMod.zip" ||
       url === "https://example.test/AnotherMod.zip" ||
       url === "https://example.test/DependentMod.zip" ||
-      url === "https://example.test/BrokenDependent.zip"
+      url === "https://example.test/BrokenDependent.zip" ||
+      url === "https://example.test/RealSolarSystem.zip" ||
+      url === "https://example.test/RSSTextures4096.zip" ||
+      url === "https://example.test/RSSTextures8192.zip"
     ) {
       return new Response(Buffer.from(zipBytes), {
         status: 200,
@@ -566,6 +599,66 @@ describe("mod install API", () => {
       .send({ installDependencies: true });
     expect(rejected.status).toBe(422);
     expect(rejected.body.code).toBe("PLAN_BLOCKED");
+  });
+
+  it("returns choice-required when several mods provide a dependency", async () => {
+    const { app } = await createInstallTestApp();
+
+    const plan = await request(app).post("/api/v1/mods/RealSolarSystem/plan").send({});
+    expect(plan.status).toBe(200);
+    expect(plan.body.status).toBe("choice-required");
+    expect(plan.body.choices[0].key).toBe("RSSTextures");
+    expect(plan.body.choices[0].candidates.map((entry: { identifier: string }) => entry.identifier)).toEqual([
+      "RSSTextures4096",
+      "RSSTextures8192",
+    ]);
+  });
+
+  it("installs the chosen provider when choices are sent", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const choices = { RSSTextures: "RSSTextures8192" };
+
+    const plan = await request(app).post("/api/v1/mods/RealSolarSystem/plan").send({ choices });
+    expect(plan.body.status).toBe("ok");
+
+    const accepted = await request(app)
+      .post("/api/v1/mods/RealSolarSystem/install")
+      .send({ installDependencies: true, choices });
+    expect(accepted.status).toBe(202);
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+    expect(finished.status).toBe("succeeded");
+
+    expect(readFileSync(join(ksp, "GameData", "RSSTextures8192", "readme.txt"), "utf8")).toContain("ExampleMod");
+    expect(() => readFileSync(join(ksp, "GameData", "RSSTextures4096", "readme.txt"))).toThrow();
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ identifier: "RSSTextures8192", status: "managed" })]),
+    );
+  });
+
+  it("rejects dependency installs with pending choices", async () => {
+    const { app } = await createInstallTestApp();
+
+    const rejected = await request(app)
+      .post("/api/v1/mods/RealSolarSystem/install")
+      .send({ installDependencies: true });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.code).toBe("PLAN_NOT_READY");
+    expect(rejected.body.message).toContain("RSSTextures");
+  });
+
+  it("rejects oversized choices", async () => {
+    const { app } = await createInstallTestApp();
+    const choices = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`key${index}`, "value"]));
+
+    const plan = await request(app).post("/api/v1/mods/RealSolarSystem/plan").send({ choices });
+    expect(plan.status).toBe(400);
+    expect(plan.body.code).toBe("INVALID_REQUEST");
+    const install = await request(app)
+      .post("/api/v1/mods/RealSolarSystem/install")
+      .send({ installDependencies: true, choices });
+    expect(install.status).toBe(400);
+    expect(install.body.code).toBe("INVALID_REQUEST");
   });
 
   it("keeps Phase 4 install behavior when installDependencies is false", async () => {
