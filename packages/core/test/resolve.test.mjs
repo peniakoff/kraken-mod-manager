@@ -458,3 +458,152 @@ test("limits candidates to provider versions inside the range", () => {
     { identifier: "Consumer", name: "Consumer", version: "1.0.0" },
   ]);
 });
+
+function anyOf(...names) {
+  return { kind: "anyOf", alternatives: names.map((name) => dep(name)) };
+}
+
+const visualTarget = mod({
+  identifier: "VisualPack",
+  name: "Visual Pack",
+  version: "1.0.0",
+  relationships: rels({ depends: [anyOf("EVE-HD", "SVE")] }),
+});
+
+test("treats an any_of group as satisfied by an installed alternative", () => {
+  const sve = mod({ identifier: "SVE", name: "SVE", version: "1.0.0" });
+  const eve = mod({ identifier: "EVE-Default", name: "EVE Default", version: "1.0.0", provides: ["EVE-HD"] });
+  const plan = resolveInstallPlan({
+    target: visualTarget,
+    registryModules: [visualTarget, sve, eve],
+    inventory: [{ identifier: "SVE", version: "1.0.0", status: "managed" }],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["VisualPack"]);
+  assert.equal(plan.alreadySatisfied[0]?.identifier, "SVE");
+});
+
+test("auto-picks the only available alternative of an any_of group", () => {
+  const sve = mod({ identifier: "SVE", name: "SVE", version: "1.0.0" });
+  const plan = resolveInstallPlan({ target: visualTarget, registryModules: [visualTarget, sve], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["SVE", "VisualPack"]);
+});
+
+test("asks for a choice over the union of any_of candidates", () => {
+  const sve = mod({ identifier: "SVE", name: "SVE", version: "1.0.0" });
+  const eve = mod({ identifier: "EVE-Default", name: "EVE Default", version: "1.0.0", provides: ["EVE-HD"] });
+  const plan = resolveInstallPlan({ target: visualTarget, registryModules: [visualTarget, sve, eve], inventory: [] });
+
+  assert.equal(plan.status, "choice-required");
+  assert.deepEqual(plan.choices, [
+    {
+      key: "any_of:EVE-HD|SVE",
+      label: "one of EVE-HD, SVE",
+      requiredBy: ["VisualPack"],
+      candidates: [
+        { identifier: "EVE-Default", name: "EVE Default", version: "1.0.0", via: "provides" },
+        { identifier: "SVE", name: "SVE", version: "1.0.0", via: "identifier" },
+      ],
+    },
+  ]);
+});
+
+test("honours a choice for an any_of group", () => {
+  const sve = mod({ identifier: "SVE", name: "SVE", version: "1.0.0" });
+  const eve = mod({ identifier: "EVE-Default", name: "EVE Default", version: "1.0.0", provides: ["EVE-HD"] });
+  const plan = resolveInstallPlan({
+    target: visualTarget,
+    registryModules: [visualTarget, sve, eve],
+    inventory: [],
+    choices: { "any_of:EVE-HD|SVE": "EVE-Default" },
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["EVE-Default", "VisualPack"]);
+});
+
+test("blocks when a planned module conflicts with a virtual name another planned module provides", () => {
+  const consumer = mod({
+    identifier: "A",
+    name: "A",
+    version: "1.0.0",
+    relationships: rels({ conflicts: [dep("FAR")] }),
+  });
+  const far = mod({ identifier: "B", name: "B", version: "1.0.0", provides: ["FAR"] });
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    // A is resolved before B is planned, so conflicts must be checked after the walk.
+    relationships: rels({ depends: [dep("A"), dep("B")] }),
+  });
+  const plan = resolveInstallPlan({ target, registryModules: [target, consumer, far], inventory: [] });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.conflicts.map((entry) => entry.message).join(" "), /A conflicts with planned B/);
+});
+
+test("does not let a provider conflict with itself", () => {
+  const far = mod({
+    identifier: "B",
+    name: "B",
+    version: "1.0.0",
+    provides: ["FAR"],
+    relationships: rels({ conflicts: [dep("FAR"), dep("B")] }),
+  });
+  const plan = resolveInstallPlan({ target: far, registryModules: [far], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test("blocks when an installed module provides a name the target conflicts with", () => {
+  const installedFar = mod({ identifier: "FerramAerospaceResearch", name: "FAR", version: "1.0.0", provides: ["FAR"] });
+  const target = mod({
+    identifier: "OtherAero",
+    name: "Other Aero",
+    version: "1.0.0",
+    provides: ["FAR"],
+    relationships: rels({ conflicts: [dep("FAR")] }),
+  });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, installedFar],
+    inventory: [{ identifier: "FerramAerospaceResearch", version: "1.0.0", status: "managed" }],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.conflicts[0]?.message ?? "", /OtherAero conflicts with installed FerramAerospaceResearch/);
+});
+
+test("blocks when a conflicts any_of group matches a planned module", () => {
+  const b = mod({ identifier: "B", name: "B", version: "1.0.0" });
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("B")], conflicts: [anyOf("A", "B")] }),
+  });
+  const plan = resolveInstallPlan({ target, registryModules: [target, b], inventory: [] });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.conflicts[0]?.message ?? "", /Target conflicts with planned B/);
+});
+
+test("keeps recommends any_of as optional without installing it", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ recommends: [anyOf("B", "A")] }),
+  });
+  const a = mod({ identifier: "A", name: "A", version: "1.0.0" });
+  const plan = resolveInstallPlan({ target, registryModules: [target, a], inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall), ["Target"]);
+  assert.deepEqual(plan.optional, [{ kind: "recommends", name: "any_of:A|B", requiredBy: "Target" }]);
+});
