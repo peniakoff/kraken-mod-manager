@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in Kraken Mod Manager does not work as expected.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Kraken version
+      description: Shown in the app header, or the release you downloaded.
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows (x64)
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux (x64)
+    validations:
+      required: true
+  - type: input
+    id: ksp
+    attributes:
+      label: KSP version and store
+      placeholder: 1.12.5, Steam
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Browse mods
+        2. Install ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error messages
+      description: Terminal output of the Kraken executable, or the message shown in the app.
+      render: text

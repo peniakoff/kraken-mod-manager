@@ -18,40 +18,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
-  # SEA copies the running Node executable, so every target needs its own
-  # native runner; there is no cross-compilation.
   sea:
-    name: sea (${{ matrix.binary }})
     needs: verify
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            binary: kraken-mod-manager-linux-x64
-          - os: windows-latest
-            binary: kraken-mod-manager-win-x64.exe
-          - os: macos-latest
-            binary: kraken-mod-manager-macos-arm64
-          - os: macos-15-intel
-            binary: kraken-mod-manager-macos-x64
-    env:
-      SEA_BINARY: apps/backend/dist/${{ matrix.binary }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-workspace
-      - run: pnpm package:sea
-      - name: Check the binary matches the expected platform name
-        shell: bash
-        run: test -f "$SEA_BINARY"
-      - run: pnpm smoke:sea
-      - name: Run the Linux binary in a container without Node.js
-        if: runner.os == 'Linux'
-        run: pnpm --filter @kraken/backend smoke:sea:no-node
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.binary }}
-          path: ${{ env.SEA_BINARY }}
-          if-no-files-found: error
-          retention-days: 14
+    uses: ./.github/workflows/sea.yml
