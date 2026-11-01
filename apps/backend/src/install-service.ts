@@ -42,7 +42,8 @@ export class InstallServiceError extends Error {
       | "NOT_MANAGED"
       | "PLAN_BLOCKED"
       | "PLAN_NOT_READY"
-      | "UNINSTALL_PLAN_MISMATCH",
+      | "UNINSTALL_PLAN_MISMATCH"
+      | "INSTALL_IN_PROGRESS",
   ) {
     super(message);
     this.name = "InstallServiceError";
@@ -174,6 +175,14 @@ export class InstallService {
   }
 
   private async uninstallOptions(kspPath: string, identifier: string): Promise<PlanUninstallOptions> {
+    // An install writes each dependency's record before its target, so a
+    // dependency would look orphaned mid-install and could be removed.
+    if (this.jobStore.hasActiveJobs()) {
+      throw new InstallServiceError(
+        "Wait for running installs to finish before uninstalling.",
+        "INSTALL_IN_PROGRESS",
+      );
+    }
     const inventory = await this.listInstalled(kspPath);
     const canonicalRoot = await this.fileSystem.realpath(kspPath);
     const manifest = await this.manifestStore.read();

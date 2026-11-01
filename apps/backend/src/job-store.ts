@@ -26,6 +26,11 @@ export class JobStore {
     return job;
   }
 
+  /** True while any job is queued or running. */
+  hasActiveJobs(): boolean {
+    return [...this.jobs.values()].some((job) => job.status === "queued" || job.status === "running");
+  }
+
   get(jobId: string): InstallJob | undefined {
     return this.jobs.get(jobId);
   }

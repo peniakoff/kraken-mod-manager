@@ -581,7 +581,8 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       const status =
         error.code === "NOT_CONFIGURED" ||
         error.code === "PLAN_NOT_READY" ||
-        error.code === "UNINSTALL_PLAN_MISMATCH"
+        error.code === "UNINSTALL_PLAN_MISMATCH" ||
+        error.code === "INSTALL_IN_PROGRESS"
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404

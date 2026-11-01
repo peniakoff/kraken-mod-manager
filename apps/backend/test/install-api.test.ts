@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zipSync } from "fflate";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { HttpPort, PlatformPort } from "@kraken/core";
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
@@ -187,7 +187,12 @@ function fixtureMetaArchive(
   return new Uint8Array(gzipSync(tar));
 }
 
-async function createInstallTestApp() {
+interface InstallTestOptions {
+  /** Delays the response for one download URL until the promise settles. */
+  holdDownload?: { url: string; until: Promise<void> };
+}
+
+async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "kmm-install-"));
   const ksp = join(home, "KSP");
   mkdirSync(join(ksp, "GameData"), { recursive: true });
@@ -215,6 +220,9 @@ async function createInstallTestApp() {
   };
 
   const streamingHttp = new StreamingHttp(async (url) => {
+    if (testOptions.holdDownload?.url === url) {
+      await testOptions.holdDownload.until;
+    }
     if (
       url === "https://example.test/ExampleMod.zip" ||
       url === "https://example.test/AnotherMod.zip" ||
@@ -853,6 +861,35 @@ describe("mod install API", () => {
     expect(() => readFileSync(join(secondKsp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
     expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
     expect(readManifestFile(home).mods.map((mod) => mod.identifier).sort()).toEqual(["DependentMod", "ModuleManager"]);
+  });
+
+  it("refuses to plan or run an uninstall while an install is in progress", async () => {
+    let release: () => void = () => undefined;
+    const until = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { app, home } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/DependentMod.zip", until },
+    });
+    const example = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    expect((await waitForJob(app, example.body.job.jobId)).status).toBe("succeeded");
+
+    const pending = await request(app).post("/api/v1/mods/DependentMod/install").send({ installDependencies: true });
+    expect(pending.status).toBe(202);
+    await vi.waitFor(() => expect(readManifestFile(home).mods.map((mod) => mod.identifier)).toContain("ModuleManager"));
+
+    const plan = await request(app).post("/api/v1/mods/ExampleMod/uninstall-plan").send({});
+    expect(plan.status).toBe(409);
+    expect(plan.body.code).toBe("INSTALL_IN_PROGRESS");
+    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({ alsoRemove: ["ModuleManager"] });
+    expect(removed.status).toBe(409);
+    expect(removed.body.code).toBe("INSTALL_IN_PROGRESS");
+
+    release();
+    expect((await waitForJob(app, pending.body.job.jobId)).status).toBe("succeeded");
+    expect(manifestRecord(home, "ModuleManager").autoInstalled).toBe(true);
+    const after = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
+    expect(after.status).toBe(200);
   });
 
   it("no longer removes mods through DELETE", async () => {
