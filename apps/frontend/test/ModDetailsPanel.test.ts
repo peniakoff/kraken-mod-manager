@@ -22,10 +22,10 @@ const sampleMod = {
     spacedock: "https://spacedock.info/mod/123",
   },
   relationships: {
-    depends: [{ name: "KSP-AVC", minVersion: "1.4.0" }],
-    conflicts: [{ name: "OldModuleManager" }],
-    recommends: [{ name: "ToolbarController" }],
-    suggests: [{ name: "ClickThroughBlocker" }],
+    depends: [{ kind: "single" as const, name: "KSP-AVC", minVersion: "1.4.0" }],
+    conflicts: [{ kind: "single" as const, name: "OldModuleManager" }],
+    recommends: [{ kind: "single" as const, name: "ToolbarController" }],
+    suggests: [{ kind: "single" as const, name: "ClickThroughBlocker" }],
   },
 };
 
@@ -141,6 +141,39 @@ describe("ModDetailsPanel component", () => {
     expect(wrapper.text()).toContain("OldModuleManager");
     expect(wrapper.text()).toContain("ToolbarController");
     expect(wrapper.text()).toContain("ClickThroughBlocker");
+  });
+
+  it("renders any_of groups as one of", () => {
+    const anyOfMod = {
+      ...sampleMod,
+      relationships: {
+        ...sampleMod.relationships,
+        depends: [
+          {
+            kind: "anyOf" as const,
+            alternatives: [
+              { kind: "single" as const, name: "TextureReplacer" },
+              { kind: "single" as const, name: "DiRT" },
+            ],
+          },
+        ],
+      },
+    };
+    const wrapper = mount(ModDetailsPanel, {
+      props: { mod: anyOfMod, versions: [anyOfMod], installedMods: [], availableUpdates: [] },
+    });
+
+    expect(wrapper.text()).toContain("one of TextureReplacer, DiRT");
+  });
+
+  it("lists provided names", () => {
+    const providerMod = { ...sampleMod, provides: ["EVE-Config"] };
+    const wrapper = mount(ModDetailsPanel, {
+      props: { mod: providerMod, versions: [providerMod], installedMods: [], availableUpdates: [] },
+    });
+
+    expect(wrapper.text()).toContain("Provides:");
+    expect(wrapper.text()).toContain("EVE-Config");
   });
 
   it("handles version switching", async () => {

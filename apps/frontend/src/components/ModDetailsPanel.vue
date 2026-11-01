@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import type { AvailableUpdate, CkanModule, CkanResources, InstalledMod } from "@kraken/contracts";
+import type { AvailableUpdate, CkanModule, CkanRelationship, CkanResources, InstalledMod } from "@kraken/contracts";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
 
 const props = withDefaults(defineProps<{
@@ -99,12 +99,30 @@ const relationships = computed(() => {
   return currentVersionMod.value.relationships ?? props.mod.relationships;
 });
 
+const provides = computed(() => currentVersionMod.value.provides ?? []);
+
 const hasRelationships = computed(() => {
   const r = relationships.value;
   return Boolean(
-    r && (r.depends.length > 0 || r.conflicts.length > 0 || r.recommends.length > 0 || r.suggests.length > 0),
+    provides.value.length > 0 ||
+      (r && (r.depends.length > 0 || r.conflicts.length > 0 || r.recommends.length > 0 || r.suggests.length > 0)),
   );
 });
+
+function formatRelationship(relation: CkanRelationship): string {
+  switch (relation.kind) {
+    case "single":
+      return `${relation.name}${relation.minVersion ? ` >= ${relation.minVersion}` : ""}${relation.maxVersion ? ` <= ${relation.maxVersion}` : ""}`;
+    case "anyOf":
+      return `one of ${relation.alternatives.map((alternative) => alternative.name).join(", ")}`;
+    case "unsupported":
+      return "unsupported relationship";
+    default: {
+      const exhaustive: never = relation;
+      throw new Error(`Unknown relationship kind: ${JSON.stringify(exhaustive)}`);
+    }
+  }
+}
 
 function onVersionChange(event: Event): void {
   const select = event.target as HTMLSelectElement;
@@ -303,16 +321,29 @@ onUnmounted(() => {
       <div class="mt-4 border-b border-slate-800 pb-4">
         <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Relationships</h3>
         <div v-if="hasRelationships" class="mt-2 space-y-3">
+          <div v-if="provides.length > 0">
+            <span class="text-xs font-medium text-slate-400">Provides:</span>
+            <ul class="mt-1 flex flex-wrap gap-1.5">
+              <li
+                v-for="name in provides"
+                :key="name"
+                class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
+              >
+                {{ name }}
+              </li>
+            </ul>
+          </div>
+
           <!-- Depends -->
           <div v-if="relationships && relationships.depends.length > 0">
             <span class="text-xs font-medium text-slate-400">Depends on:</span>
             <ul class="mt-1 flex flex-wrap gap-1.5">
               <li
-                v-for="dep in relationships.depends"
-                :key="dep.name"
+                v-for="(dep, index) in relationships.depends"
+                :key="`${index}-${formatRelationship(dep)}`"
                 class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
               >
-                {{ dep.name }}{{ dep.minVersion ? ` >= ${dep.minVersion}` : "" }}{{ dep.maxVersion ? ` <= ${dep.maxVersion}` : "" }}
+                {{ formatRelationship(dep) }}
               </li>
             </ul>
           </div>
@@ -322,11 +353,11 @@ onUnmounted(() => {
             <span class="text-xs font-medium text-rose-400">Conflicts with:</span>
             <ul class="mt-1 flex flex-wrap gap-1.5">
               <li
-                v-for="conf in relationships.conflicts"
-                :key="conf.name"
+                v-for="(conf, index) in relationships.conflicts"
+                :key="`${index}-${formatRelationship(conf)}`"
                 class="rounded border border-rose-900/60 bg-rose-950/40 px-2 py-0.5 text-xs text-rose-300 font-mono"
               >
-                {{ conf.name }}
+                {{ formatRelationship(conf) }}
               </li>
             </ul>
           </div>
@@ -336,11 +367,11 @@ onUnmounted(() => {
             <span class="text-xs font-medium text-slate-400">Recommends:</span>
             <ul class="mt-1 flex flex-wrap gap-1.5">
               <li
-                v-for="rec in relationships.recommends"
-                :key="rec.name"
+                v-for="(rec, index) in relationships.recommends"
+                :key="`${index}-${formatRelationship(rec)}`"
                 class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
               >
-                {{ rec.name }}
+                {{ formatRelationship(rec) }}
               </li>
             </ul>
           </div>
@@ -350,11 +381,11 @@ onUnmounted(() => {
             <span class="text-xs font-medium text-slate-400">Suggests:</span>
             <ul class="mt-1 flex flex-wrap gap-1.5">
               <li
-                v-for="sug in relationships.suggests"
-                :key="sug.name"
+                v-for="(sug, index) in relationships.suggests"
+                :key="`${index}-${formatRelationship(sug)}`"
                 class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
               >
-                {{ sug.name }}
+                {{ formatRelationship(sug) }}
               </li>
             </ul>
           </div>

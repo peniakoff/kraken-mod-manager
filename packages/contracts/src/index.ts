@@ -88,12 +88,24 @@ export const ckanDownloadHashSchema = z.object({
 
 export type CkanDownloadHash = z.infer<typeof ckanDownloadHashSchema>;
 
-export const ckanRelationshipSchema = z.object({
+export const ckanSingleRelationshipSchema = z.object({
+  kind: z.literal("single"),
   name: z.string().min(1),
   minVersion: z.string().min(1).optional(),
   maxVersion: z.string().min(1).optional(),
-  unsupported: z.boolean().optional(),
 });
+
+export const ckanRelationshipSchema = z.discriminatedUnion("kind", [
+  ckanSingleRelationshipSchema,
+  z.object({
+    kind: z.literal("anyOf"),
+    alternatives: z.array(ckanSingleRelationshipSchema).min(1),
+  }),
+  z.object({
+    kind: z.literal("unsupported"),
+    reason: z.string().min(1),
+  }),
+]);
 
 export type CkanRelationship = z.infer<typeof ckanRelationshipSchema>;
 
@@ -138,6 +150,7 @@ export const ckanModuleSchema = z.object({
   kspVersionMin: z.string().min(1).optional(),
   kspVersionMax: z.string().min(1).optional(),
   tags: z.array(z.string().min(1)),
+  provides: z.array(z.string().min(1)).optional(),
   download: z.string().min(1).optional(),
   downloadSize: z.number().int().nonnegative().optional(),
   downloadHash: ckanDownloadHashSchema.optional(),
@@ -211,20 +224,29 @@ export const updatesResponseSchema = z.object({
 
 export type UpdatesResponse = z.infer<typeof updatesResponseSchema>;
 
+/** User-selected provider identifiers keyed by install-plan choice key. */
+export const installChoicesSchema = z
+  .record(z.string().min(1).max(256), z.string().min(1).max(256))
+  .refine((choices) => Object.keys(choices).length <= 64, { message: "At most 64 choices are allowed" });
+
+export type InstallChoices = z.infer<typeof installChoicesSchema>;
+
 export const installModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
   installDependencies: z.boolean().optional().default(false),
+  choices: installChoicesSchema.optional(),
 });
 
 export type InstallModRequest = z.infer<typeof installModRequestSchema>;
 
 export const planModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
+  choices: installChoicesSchema.optional(),
 });
 
 export type PlanModRequest = z.infer<typeof planModRequestSchema>;
 
-export const installPlanStatusSchema = z.enum(["ok", "blocked"]);
+export const installPlanStatusSchema = z.enum(["ok", "choice-required", "blocked"]);
 
 export const installPlanModuleRefSchema = z.object({
   identifier: z.string().min(1),
@@ -261,6 +283,19 @@ export const installPlanOptionalSchema = z.object({
   requiredBy: z.string().min(1),
 });
 
+export const installPlanChoiceSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  requiredBy: z.array(z.string().min(1)),
+  candidates: z.array(
+    installPlanModuleRefSchema.extend({
+      via: z.enum(["identifier", "provides"]),
+    }),
+  ),
+});
+
+export type InstallPlanChoice = z.infer<typeof installPlanChoiceSchema>;
+
 export const installPlanResponseSchema = z.object({
   status: installPlanStatusSchema,
   target: installPlanModuleRefSchema,
@@ -269,6 +304,7 @@ export const installPlanResponseSchema = z.object({
   conflicts: z.array(installPlanConflictSchema),
   unmet: z.array(installPlanUnmetSchema),
   optional: z.array(installPlanOptionalSchema),
+  choices: z.array(installPlanChoiceSchema).default([]),
 });
 
 export type InstallPlanResponse = z.infer<typeof installPlanResponseSchema>;

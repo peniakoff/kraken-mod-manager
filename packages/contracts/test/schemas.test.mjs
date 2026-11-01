@@ -4,6 +4,7 @@ import {
   apiErrorSchema,
   configResponseSchema,
   directoryListingResponseSchema,
+  ckanRelationshipSchema,
   installModRequestSchema,
   installPlanResponseSchema,
   installedModsResponseSchema,
@@ -13,6 +14,7 @@ import {
   modVersionsResponseSchema,
   modsQuerySchema,
   modsResponseSchema,
+  planModRequestSchema,
   registryResponseSchema,
   updateConfigRequestSchema,
 } from "../dist/index.js";
@@ -154,4 +156,52 @@ test("accepts mod details and mod versions responses with resources, description
   });
   assert.equal(versions.identifier, "ModuleManager");
   assert.equal(versions.versions.length, 2);
+});
+
+test("accepts bounded install choices and rejects oversized ones", () => {
+  const valid = { RSSTextures: "RSSTextures8192" };
+  assert.deepEqual(planModRequestSchema.parse({ choices: valid }).choices, valid);
+  assert.deepEqual(installModRequestSchema.parse({ installDependencies: true, choices: valid }).choices, valid);
+
+  const tooMany = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`key${index}`, "value"]));
+  assert.equal(planModRequestSchema.safeParse({ choices: tooMany }).success, false);
+  assert.equal(installModRequestSchema.safeParse({ choices: tooMany }).success, false);
+  assert.equal(planModRequestSchema.safeParse({ choices: { RSSTextures: "" } }).success, false);
+  assert.equal(planModRequestSchema.safeParse({ choices: { ["k".repeat(257)]: "value" } }).success, false);
+  assert.equal(planModRequestSchema.safeParse({ choices: { RSSTextures: "v".repeat(257) } }).success, false);
+});
+
+test("accepts a choice-required plan response", () => {
+  const plan = installPlanResponseSchema.parse({
+    status: "choice-required",
+    target: { identifier: "RealSolarSystem", name: "Real Solar System", version: "1.0.0" },
+    toInstall: [{ identifier: "RealSolarSystem", name: "Real Solar System", version: "1.0.0" }],
+    alreadySatisfied: [],
+    conflicts: [],
+    unmet: [],
+    optional: [],
+    choices: [
+      {
+        key: "RSSTextures",
+        label: "RSSTextures",
+        requiredBy: ["RealSolarSystem"],
+        candidates: [
+          { identifier: "RSSTextures4096", name: "RSS Textures 4096", version: "1.0.0", via: "provides" },
+          { identifier: "RSSTextures8192", name: "RSS Textures 8192", version: "1.0.0", via: "provides" },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(plan.choices[0]?.candidates.length, 2);
+});
+
+test("accepts the relationship union and rejects untagged relationships", () => {
+  assert.equal(ckanRelationshipSchema.safeParse({ kind: "single", name: "A", minVersion: "1.0" }).success, true);
+  assert.equal(
+    ckanRelationshipSchema.safeParse({ kind: "anyOf", alternatives: [{ kind: "single", name: "A" }] }).success,
+    true,
+  );
+  assert.equal(ckanRelationshipSchema.safeParse({ kind: "unsupported", reason: "nested array" }).success, true);
+  assert.equal(ckanRelationshipSchema.safeParse({ name: "A" }).success, false);
 });
