@@ -36,8 +36,9 @@ test("parses a valid .ckan document and normalizes authors", () => {
     tags: ["plugin"],
     download: "https://example.test/mm.zip",
     downloadSize: 42,
+    provides: [],
     relationships: {
-      depends: [{ name: "Something" }],
+      depends: [{ kind: "single", name: "Something" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -62,35 +63,83 @@ test("parses depends, conflicts, recommends, and suggests with version bounds", 
 
   assert.deepEqual(module?.relationships, {
     depends: [
-      { name: "ModuleManager", minVersion: "4.0.0", maxVersion: "4.2.3" },
-      { name: "LegacyDep" },
+      { kind: "single", name: "ModuleManager", minVersion: "4.0.0", maxVersion: "4.2.3" },
+      { kind: "single", name: "LegacyDep" },
     ],
-    conflicts: [{ name: "OldFancyMod" }],
-    recommends: [{ name: "ToolbarController", minVersion: "1.0" }],
-    suggests: [{ name: "ClickThroughBlocker" }],
+    conflicts: [{ kind: "single", name: "OldFancyMod" }],
+    recommends: [{ kind: "single", name: "ToolbarController", minVersion: "1.0" }],
+    suggests: [{ kind: "single", name: "ClickThroughBlocker" }],
   });
 });
 
-test("marks any_of and nameless relationship entries as unsupported", () => {
+test("marks malformed relationship entries as unsupported", () => {
   const module = parseCkanDocument({
     identifier: "FancyMod",
     name: "Fancy Mod",
     author: "Author",
     version: "2.0.0",
     depends: [
-      {
-        any_of: [{ name: "TextureReplacer" }, { name: "DiRT" }],
-      },
+      { any_of: [] },
+      { any_of: [{ name: "A" }, { min_version: "1" }] },
       { min_version: "1.0.0" },
     ],
     conflicts: [[{ name: "NestedLegacy" }]],
   });
 
   assert.deepEqual(module?.relationships?.depends, [
-    { name: "any_of", unsupported: true },
-    { name: "unsupported", unsupported: true },
+    { kind: "unsupported", reason: "empty any_of" },
+    { kind: "unsupported", reason: "invalid any_of alternative" },
+    { kind: "unsupported", reason: "missing name" },
   ]);
-  assert.deepEqual(module?.relationships?.conflicts, [{ name: "unsupported", unsupported: true }]);
+  assert.deepEqual(module?.relationships?.conflicts, [{ kind: "unsupported", reason: "nested array" }]);
+});
+
+test("parses any_of groups into anyOf relationships", () => {
+  const module = parseCkanDocument({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    author: "Author",
+    version: "2.0.0",
+    depends: [{ any_of: [{ name: "TextureReplacer" }, { name: "DiRT", min_version: "1.0" }] }],
+  });
+
+  assert.deepEqual(module?.relationships?.depends, [
+    {
+      kind: "anyOf",
+      alternatives: [
+        { kind: "single", name: "TextureReplacer" },
+        { kind: "single", name: "DiRT", minVersion: "1.0" },
+      ],
+    },
+  ]);
+});
+
+test("maps an exact relationship version to min and max", () => {
+  const module = parseCkanDocument({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    author: "Author",
+    version: "2.0.0",
+    depends: [{ name: "A", version: "1.2", min_version: "1.0" }],
+  });
+
+  assert.deepEqual(module?.relationships?.depends, [
+    { kind: "single", name: "A", minVersion: "1.2", maxVersion: "1.2" },
+  ]);
+});
+
+test("parses provides, dropping blanks, duplicates and the own identifier", () => {
+  const module = parseCkanDocument({
+    identifier: "FancyMod",
+    name: "Fancy Mod",
+    author: "Author",
+    version: "2.0.0",
+    provides: ["EVE-Config", "", "EVE-Config", "FancyMod", 7],
+  });
+  const plain = parseCkanDocument({ identifier: "Plain", name: "Plain", author: "Author", version: "1.0" });
+
+  assert.deepEqual(module?.provides, ["EVE-Config"]);
+  assert.deepEqual(plain?.provides, []);
 });
 
 test("parses install stanzas and download hashes", () => {

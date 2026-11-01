@@ -15,17 +15,28 @@ export interface CkanDownloadHash {
   sha256?: string;
 }
 
-export interface CkanRelationship {
+export interface CkanSingleRelationship {
+  kind: "single";
   name: string;
   minVersion?: string;
   maxVersion?: string;
-  /**
-   * True when the CKAN entry uses a form Kraken cannot resolve yet
-   * (for example `any_of`). Resolvers must treat these as unmet/blocking
-   * rather than silently ignoring them.
-   */
-  unsupported?: boolean;
 }
+
+export interface CkanAnyOfRelationship {
+  kind: "anyOf";
+  alternatives: CkanSingleRelationship[];
+}
+
+/**
+ * A relationship shape Kraken cannot interpret. Resolvers must treat it as
+ * blocking rather than silently ignoring it.
+ */
+export interface CkanUnsupportedRelationship {
+  kind: "unsupported";
+  reason: string;
+}
+
+export type CkanRelationship = CkanSingleRelationship | CkanAnyOfRelationship | CkanUnsupportedRelationship;
 
 export interface CkanRelationships {
   depends: CkanRelationship[];
@@ -56,6 +67,8 @@ export interface CkanModule {
   kspVersionMin?: string;
   kspVersionMax?: string;
   tags: string[];
+  /** Virtual package names this module satisfies, excluding its own identifier. */
+  provides: string[];
   download?: string;
   downloadSize?: number;
   downloadHash?: CkanDownloadHash;
@@ -117,6 +130,7 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     authors: normalizeAuthors(document.author),
     version,
     tags: normalizeTags(document.tags),
+    provides: parseProvides(document.provides, identifier),
   };
 
   const abstractText = asOptionalString(document.abstract);
@@ -577,44 +591,82 @@ function parseRelationshipList(value: unknown): CkanRelationship[] {
   }
   const relationships: CkanRelationship[] = [];
   for (const entry of value) {
-    if (typeof entry === "string") {
-      const name = asNonEmptyString(entry);
-      if (name !== undefined) {
-        relationships.push({ name });
-      }
-      continue;
+    const relationship = parseRelationshipEntry(entry);
+    if (relationship !== undefined) {
+      relationships.push(relationship);
     }
-    if (typeof entry !== "object" || entry === null) {
-      continue;
-    }
-    if (Array.isArray(entry)) {
-      // Legacy / invalid nested groups — fail closed so plans cannot go green.
-      relationships.push({ name: "unsupported", unsupported: true });
-      continue;
-    }
-    const raw = entry as Record<string, unknown>;
-    if (Object.hasOwn(raw, "any_of")) {
-      // any_of resolution is out of scope; mark unsupported so install plans block.
-      relationships.push({ name: "any_of", unsupported: true });
-      continue;
-    }
-    const name = asNonEmptyString(raw.name);
-    if (name === undefined) {
-      relationships.push({ name: "unsupported", unsupported: true });
-      continue;
-    }
-    const relationship: CkanRelationship = { name };
-    const minVersion = asNonEmptyString(raw.min_version);
-    if (minVersion !== undefined) {
-      relationship.minVersion = minVersion;
-    }
-    const maxVersion = asNonEmptyString(raw.max_version);
-    if (maxVersion !== undefined) {
-      relationship.maxVersion = maxVersion;
-    }
-    relationships.push(relationship);
   }
   return relationships;
+}
+
+function parseRelationshipEntry(entry: unknown): CkanRelationship | undefined {
+  if (typeof entry === "string") {
+    const name = asNonEmptyString(entry);
+    return name === undefined ? undefined : { kind: "single", name };
+  }
+  if (typeof entry !== "object" || entry === null) {
+    return undefined;
+  }
+  if (Array.isArray(entry)) {
+    // Legacy / invalid nested groups — fail closed so plans cannot go green.
+    return { kind: "unsupported", reason: "nested array" };
+  }
+  const raw = entry as Record<string, unknown>;
+  if (Object.hasOwn(raw, "any_of")) {
+    return parseAnyOf(raw.any_of);
+  }
+  return parseSingleRelationship(raw) ?? { kind: "unsupported", reason: "missing name" };
+}
+
+function parseAnyOf(value: unknown): CkanRelationship {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { kind: "unsupported", reason: "empty any_of" };
+  }
+  const alternatives: CkanSingleRelationship[] = [];
+  for (const entry of value) {
+    const alternative =
+      typeof entry === "object" && entry !== null && !Array.isArray(entry)
+        ? parseSingleRelationship(entry as Record<string, unknown>)
+        : undefined;
+    if (alternative === undefined) {
+      return { kind: "unsupported", reason: "invalid any_of alternative" };
+    }
+    alternatives.push(alternative);
+  }
+  return { kind: "anyOf", alternatives };
+}
+
+function parseSingleRelationship(raw: Record<string, unknown>): CkanSingleRelationship | undefined {
+  const name = asNonEmptyString(raw.name);
+  if (name === undefined) {
+    return undefined;
+  }
+  const relationship: CkanSingleRelationship = { kind: "single", name };
+  // CKAN's `version` pins an exact version and takes precedence over a range.
+  const exactVersion = asNonEmptyString(raw.version);
+  const minVersion = exactVersion ?? asNonEmptyString(raw.min_version);
+  const maxVersion = exactVersion ?? asNonEmptyString(raw.max_version);
+  if (minVersion !== undefined) {
+    relationship.minVersion = minVersion;
+  }
+  if (maxVersion !== undefined) {
+    relationship.maxVersion = maxVersion;
+  }
+  return relationship;
+}
+
+function parseProvides(value: unknown, identifier: string): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const provided = new Set<string>();
+  for (const entry of value) {
+    const name = asNonEmptyString(entry);
+    if (name !== undefined && name !== identifier) {
+      provided.add(name);
+    }
+  }
+  return [...provided];
 }
 
 function normalizeArchivePath(path: string): string {

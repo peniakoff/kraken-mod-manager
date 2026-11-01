@@ -23,7 +23,7 @@ test("plans transitive depends with deps before target", () => {
     version: "1.1.0",
     download: "https://example.test/lib.zip",
     relationships: {
-      depends: [{ name: "ModuleManager" }],
+      depends: [{ kind: "single", name: "ModuleManager" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -35,9 +35,9 @@ test("plans transitive depends with deps before target", () => {
     version: "2.0.0",
     download: "https://example.test/fancy.zip",
     relationships: {
-      depends: [{ name: "SharedLib" }],
+      depends: [{ kind: "single", name: "SharedLib" }],
       conflicts: [],
-      recommends: [{ name: "Toolbar" }],
+      recommends: [{ kind: "single", name: "Toolbar" }],
       suggests: [],
     },
   });
@@ -70,7 +70,7 @@ test("marks already installed depends as satisfied", () => {
     name: "Fancy Mod",
     version: "2.0.0",
     relationships: {
-      depends: [{ name: "ModuleManager", minVersion: "4.0.0" }],
+      depends: [{ kind: "single", name: "ModuleManager", minVersion: "4.0.0" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -97,8 +97,8 @@ test("blocks on conflicts and unmet dependencies", () => {
     name: "Fancy Mod",
     version: "2.0.0",
     relationships: {
-      depends: [{ name: "MissingLib" }],
-      conflicts: [{ name: "OldFancy" }],
+      depends: [{ kind: "single", name: "MissingLib" }],
+      conflicts: [{ kind: "single", name: "OldFancy" }],
       recommends: [],
       suggests: [],
     },
@@ -126,7 +126,7 @@ test("picks the latest compatible dependency version", () => {
     name: "Fancy Mod",
     version: "1.0.0",
     relationships: {
-      depends: [{ name: "ModuleManager", minVersion: "4.0.0", maxVersion: "4.9.9" }],
+      depends: [{ kind: "single", name: "ModuleManager", minVersion: "4.0.0", maxVersion: "4.9.9" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -144,13 +144,13 @@ test("picks the latest compatible dependency version", () => {
   assert.equal(plan.toInstall[0]?.version, "4.1.0");
 });
 
-test("blocks unsupported any_of depends instead of ignoring them", () => {
+test("blocks unsupported depends instead of ignoring them", () => {
   const target = mod({
     identifier: "FancyMod",
     name: "Fancy Mod",
     version: "1.0.0",
     relationships: {
-      depends: [{ name: "any_of", unsupported: true }],
+      depends: [{ kind: "unsupported", reason: "nested array" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -180,7 +180,7 @@ test("does not treat versionless detected mods as satisfying ranged depends", ()
     name: "Fancy Mod",
     version: "1.0.0",
     relationships: {
-      depends: [{ name: "ModuleManager", minVersion: "4.0.0" }],
+      depends: [{ kind: "single", name: "ModuleManager", minVersion: "4.0.0" }],
       conflicts: [],
       recommends: [],
       suggests: [],
@@ -207,7 +207,7 @@ test("blocks when an installed mod declares a conflict with the target", () => {
     version: "1.0.0",
     relationships: {
       depends: [],
-      conflicts: [{ name: "FancyMod" }],
+      conflicts: [{ kind: "single", name: "FancyMod" }],
       recommends: [],
       suggests: [],
     },

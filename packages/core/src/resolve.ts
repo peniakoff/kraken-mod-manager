@@ -7,6 +7,7 @@ import {
   compareCkanVersions,
   type CkanModule,
   type CkanRelationship,
+  type CkanSingleRelationship,
 } from "./ckan.js";
 import type { InstalledModSummary } from "./install.js";
 
@@ -96,7 +97,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       return;
     }
     for (const relation of relationships.recommends) {
-      if (relation.unsupported) {
+      if (relation.kind !== "single") {
         continue;
       }
       optional.push({
@@ -108,7 +109,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       });
     }
     for (const relation of relationships.suggests) {
-      if (relation.unsupported) {
+      if (relation.kind !== "single") {
         continue;
       }
       optional.push({
@@ -127,11 +128,12 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
       return;
     }
     for (const relation of relationships.conflicts) {
-      if (relation.unsupported) {
+      if (relation.kind !== "single") {
+        const reason = describeUnresolvable(relation);
         conflicts.push({
           identifier: module.identifier,
-          conflictingWith: relation.name,
-          message: `${module.identifier} declares an unsupported conflict relationship (${relation.name}) that Kraken cannot evaluate yet.`,
+          conflictingWith: reason,
+          message: `${module.identifier} declares an unsupported conflict relationship (${reason}) that Kraken cannot evaluate yet.`,
         });
         continue;
       }
@@ -168,7 +170,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
         continue;
       }
       for (const relation of meta.relationships?.conflicts ?? []) {
-        if (relation.unsupported) {
+        if (relation.kind !== "single") {
           continue;
         }
         if (relation.name === target.identifier && versionMatchesModule(target, relation)) {
@@ -200,11 +202,12 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
 
     const depends = module.relationships?.depends ?? [];
     for (const relation of depends) {
-      if (relation.unsupported) {
+      if (relation.kind !== "single") {
+        const reason = describeUnresolvable(relation);
         unmet.push({
-          name: relation.name,
+          name: reason,
           requiredBy: module.identifier,
-          message: `${module.identifier} has an unsupported dependency relationship (${relation.name}) that Kraken cannot resolve yet.`,
+          message: `${module.identifier} has an unsupported dependency relationship (${reason}) that Kraken cannot resolve yet.`,
         });
         continue;
       }
@@ -289,7 +292,7 @@ function indexByIdentifier(modules: readonly CkanModule[]): Map<string, CkanModu
   return map;
 }
 
-function pickLatestCompatible(candidates: readonly CkanModule[], relation: CkanRelationship): CkanModule | undefined {
+function pickLatestCompatible(candidates: readonly CkanModule[], relation: CkanSingleRelationship): CkanModule | undefined {
   const matching = candidates.filter((module) => versionMatchesModule(module, relation));
   if (matching.length === 0) {
     return undefined;
@@ -317,13 +320,13 @@ function findInstalledMetadata(
   );
 }
 
-function versionMatchesModule(module: CkanModule, relation: CkanRelationship): boolean {
+function versionMatchesModule(module: CkanModule, relation: CkanSingleRelationship): boolean {
   return versionInRange(module.version, relation.minVersion, relation.maxVersion);
 }
 
 function versionMatchesInstalled(
   mod: InstalledModSummary,
-  relation: CkanRelationship,
+  relation: CkanSingleRelationship,
   mode: "depends" | "conflicts",
 ): boolean {
   if (mod.version === undefined) {
@@ -345,6 +348,19 @@ function versionInRange(version: string, minVersion?: string, maxVersion?: strin
     return false;
   }
   return true;
+}
+
+function describeUnresolvable(relation: Exclude<CkanRelationship, CkanSingleRelationship>): string {
+  switch (relation.kind) {
+    case "anyOf":
+      return "any_of";
+    case "unsupported":
+      return relation.reason;
+    default: {
+      const exhaustive: never = relation;
+      throw new Error(`Unknown relationship kind: ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }
 
 function toRef(module: CkanModule): InstallPlanModuleRef {
@@ -372,7 +388,7 @@ function topologicalInstallOrder(modules: readonly CkanModule[]): InstallPlanMod
 
   for (const module of modules) {
     for (const dep of module.relationships?.depends ?? []) {
-      if (dep.unsupported || !ids.has(dep.name) || dep.name === module.identifier) {
+      if (dep.kind !== "single" || !ids.has(dep.name) || dep.name === module.identifier) {
         continue;
       }
       edges.get(dep.name)?.push(module.identifier);
