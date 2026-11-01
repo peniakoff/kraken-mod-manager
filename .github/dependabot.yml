@@ -15,7 +15,10 @@ updates:
         dependency-type: development
 
   - package-ecosystem: github-actions
-    directory: /
+    # The composite action pins its own action versions.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
       day: monday

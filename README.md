@@ -34,6 +34,21 @@ pnpm start
 The backend binds only to loopback. Set `KMM_PORT` to choose another local
 port, and `KMM_OPEN_BROWSER=false` to suppress opening the default browser.
 
+## Standalone executables
+
+`pnpm package:sea` builds a single executable for the current platform with
+Node 24 SEA, and `pnpm smoke:sea` checks it. On Linux,
+`pnpm --filter @kraken/backend smoke:sea:no-node` also runs the binary in a
+`debian:bookworm-slim` container without Node.js (needs Docker, or set
+`CONTAINER_RUNTIME=podman`).
+
+CI builds and smoke-tests `kraken-mod-manager-linux-x64`,
+`kraken-mod-manager-win-x64.exe`, `kraken-mod-manager-macos-arm64` and
+`kraken-mod-manager-macos-x64` on native runners and keeps them as workflow
+artifacts for 14 days. The binaries are not code-signed yet: macOS builds carry
+only an ad-hoc signature, so Gatekeeper warns about downloaded copies, and
+Windows SmartScreen may warn as well.
+
 ## Architecture
 
 - `apps/frontend` — Vue 3, Vite, and Tailwind user interface.
