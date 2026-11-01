@@ -78,7 +78,9 @@ export function planUninstall(options: PlanUninstallOptions): UninstallPlan {
       } else {
         // A detected mod stays on disk, so whatever depends on it keeps working.
         broken.add(mod.identifier);
-        brokenUnmanaged.push(graph.ref(mod));
+        if (!graph.isOwnFolderOf(mod, removed)) {
+          brokenUnmanaged.push(graph.ref(mod));
+        }
       }
     }
   }
@@ -165,8 +167,8 @@ class InstalledGraph {
   readonly mods: readonly InstalledModSummary[];
   private readonly managedById = new Map<string, ManagedModRecord>();
   private readonly metadataById = new Map<string, CkanModule | undefined>();
-  /** Detected folder identifier → managed mod whose files live in that folder. */
-  private readonly folderOwner = new Map<string, string>();
+  /** Detected folder identifier → managed mods with files in that folder. */
+  private readonly folderOwners = new Map<string, Set<string>>();
 
   constructor(options: PlanUninstallOptions) {
     this.mods = options.inventory;
@@ -191,7 +193,9 @@ class InstalledGraph {
       for (const file of record.files) {
         const [root, folder] = normalizeSlashPath(file).split("/");
         if (root === "GameData" && folder !== undefined) {
-          this.folderOwner.set(folder, record.identifier);
+          const owners = this.folderOwners.get(folder) ?? new Set<string>();
+          owners.add(record.identifier);
+          this.folderOwners.set(folder, owners);
         }
       }
     }
@@ -218,19 +222,19 @@ class InstalledGraph {
     return { identifier, name: record.name, version: record.version, status: "managed" };
   }
 
-  /**
-   * A mod counts as removed when it is in the set, or when it is a detected
-   * folder that a removed managed mod installed (its files go with it).
-   */
   isRemoved(mod: InstalledModSummary, removed: ReadonlySet<string>): boolean {
-    if (removed.has(mod.identifier)) {
-      return true;
-    }
-    if (mod.status !== "detected") {
-      return false;
-    }
-    const owner = this.folderOwner.get(mod.identifier);
-    return owner !== undefined && removed.has(owner);
+    return removed.has(mod.identifier);
+  }
+
+  /**
+   * True for a detected folder that only removed managed mods put files in,
+   * such as a target's second GameData folder. Kraken cannot tell whether the
+   * user added files there, so the folder still counts as present for
+   * dependency checks; it is only left out of the broken-mod warning.
+   */
+  isOwnFolderOf(mod: InstalledModSummary, removed: ReadonlySet<string>): boolean {
+    const owners = this.folderOwners.get(mod.identifier);
+    return mod.status === "detected" && owners !== undefined && [...owners].every((owner) => removed.has(owner));
   }
 
   /**

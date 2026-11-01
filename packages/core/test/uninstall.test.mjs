@@ -334,3 +334,32 @@ test("keeps deselected orphans out of the removal order", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.removeOrder, ["B", "A", "MM"]);
 });
+
+test("keeps a manually installed folder present when a managed mod only patches into it", () => {
+  const plan = planUninstall(
+    options("Patch", {
+      managed: [managedRecord("Patch", false, ["GameData/D/Patches/p.cfg"]), managedRecord("Z")],
+      detected: ["D"],
+      registry: [mod("D"), mod("Patch"), mod("Z", { relationships: rels([dep("D")]) })],
+    }),
+  );
+
+  assert.deepEqual(plan.dependents, []);
+  assert.deepEqual(plan.brokenUnmanaged, []);
+});
+
+test("keeps a folder shared by two managed mods present when only one is removed", () => {
+  const plan = planUninstall(
+    options("M2", {
+      managed: [
+        managedRecord("M1", false, ["GameData/F/a.cfg"]),
+        managedRecord("M2", false, ["GameData/F/b.cfg"]),
+        managedRecord("Z"),
+      ],
+      detected: ["F"],
+      registry: [mod("F"), mod("M1"), mod("M2"), mod("Z", { relationships: rels([dep("F")]) })],
+    }),
+  );
+
+  assert.deepEqual(plan.dependents, []);
+});
