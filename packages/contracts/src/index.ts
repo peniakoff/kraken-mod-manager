@@ -309,6 +309,36 @@ export const installPlanResponseSchema = z.object({
 
 export type InstallPlanResponse = z.infer<typeof installPlanResponseSchema>;
 
+export const uninstallModuleRefSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string().min(1).optional(),
+});
+
+export type UninstallModuleRef = z.infer<typeof uninstallModuleRefSchema>;
+
+export const uninstallPlanResponseSchema = z.object({
+  target: uninstallModuleRefSchema,
+  dependents: z.array(uninstallModuleRefSchema),
+  orphans: z.array(uninstallModuleRefSchema),
+  brokenUnmanaged: z.array(uninstallModuleRefSchema),
+  warnings: z.array(z.string()),
+});
+
+export type UninstallPlanResponse = z.infer<typeof uninstallPlanResponseSchema>;
+
+export const uninstallRequestSchema = z.object({
+  alsoRemove: z.array(z.string().min(1).max(256)).max(256).default([]),
+});
+
+export type UninstallRequest = z.infer<typeof uninstallRequestSchema>;
+
+export const uninstallResponseSchema = z.object({
+  removed: z.array(z.string().min(1)),
+});
+
+export type UninstallResponse = z.infer<typeof uninstallResponseSchema>;
+
 export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
 
 export const jobPhaseSchema = z.enum(["queued", "downloading", "verifying", "extracting", "installing", "done", "failed"]);

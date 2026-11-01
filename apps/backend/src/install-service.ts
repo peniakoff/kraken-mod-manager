@@ -4,18 +4,26 @@ import {
   InstallPolicyError,
   isAllowedDestination,
   normalizeSlashPath,
+  planUninstall,
   resolveInstallMappings,
   resolveInstallPlan,
+  validateUninstallSelection,
   verifyDownloadHash,
   type CkanModule,
   type FileSystemPort,
   type InstalledModSummary,
   type ManagedModRecord,
+  type PlanUninstallOptions,
+  type UninstallPlan,
 } from "@kraken/core";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
+import {
+  InstallManifestError,
+  InstallManifestStore,
+  type StoredInstallManifest,
+} from "./adapters/install-manifest-store.js";
 import { StreamingHttp, StreamingHttpError } from "./adapters/streaming-http.js";
 import { ZipArchive, ZipArchiveError } from "./adapters/zip-archive.js";
 import { JobStore } from "./job-store.js";
@@ -33,7 +41,8 @@ export class InstallServiceError extends Error {
       | "JOB_NOT_FOUND"
       | "NOT_MANAGED"
       | "PLAN_BLOCKED"
-      | "PLAN_NOT_READY",
+      | "PLAN_NOT_READY"
+      | "UNINSTALL_PLAN_MISMATCH",
   ) {
     super(message);
     this.name = "InstallServiceError";
@@ -129,41 +138,29 @@ export class InstallService {
     }
   }
 
-  async uninstall(kspPath: string, identifier: string): Promise<void> {
+  async planUninstall(kspPath: string, identifier: string): Promise<UninstallPlan> {
+    return planUninstall(await this.uninstallOptions(kspPath, identifier));
+  }
+
+  /**
+   * Recomputes the plan, checks the client's selection against it and
+   * removes the mods in dependency order. Returns the removed identifiers.
+   */
+  async uninstall(kspPath: string, identifier: string, alsoRemove: readonly string[]): Promise<string[]> {
     try {
-      await this.withManifestMutation(async () => {
+      return await this.withManifestMutation(async () => {
+        const options = await this.uninstallOptions(kspPath, identifier);
+        const selection = validateUninstallSelection(planUninstall(options), alsoRemove, options);
+        if (!selection.ok) {
+          throw new InstallServiceError(selection.problems.join(" "), "UNINSTALL_PLAN_MISMATCH");
+        }
+
         const canonicalRoot = await this.fileSystem.realpath(kspPath);
-        const manifest = await this.manifestStore.read();
-        const record = manifest.mods.find(
-          (mod) => mod.identifier === identifier && mod.installationPath === canonicalRoot,
-        );
-        if (record === undefined) {
-          throw new InstallServiceError("Only managed mods can be uninstalled.", "NOT_MANAGED");
+        let manifest = await this.manifestStore.read();
+        for (const removedIdentifier of selection.removeOrder) {
+          manifest = await this.removeManagedMod(canonicalRoot, manifest, removedIdentifier);
         }
-
-        const remaining = new Set(record.files);
-        try {
-          for (const relativePath of [...record.files].sort((left, right) => right.length - left.length)) {
-            await this.removeInstalledPath(canonicalRoot, relativePath);
-            remaining.delete(relativePath);
-          }
-          await this.pruneEmptyParents(canonicalRoot, record.files);
-        } catch (error: unknown) {
-          const remainingFiles = record.files.filter((file) => remaining.has(file));
-          await this.manifestStore.write({
-            schemaVersion: 2,
-            mods:
-              remainingFiles.length === 0
-                ? manifest.mods.filter((mod) => mod !== record)
-                : manifest.mods.map((mod) => (mod === record ? { ...record, files: remainingFiles } : mod)),
-          });
-          throw error;
-        }
-
-        await this.manifestStore.write({
-          schemaVersion: 2,
-          mods: manifest.mods.filter((mod) => mod !== record),
-        });
+        return selection.removeOrder;
       });
     } catch (error: unknown) {
       if (error instanceof InstallServiceError) {
@@ -174,6 +171,63 @@ export class InstallService {
         "UNINSTALL_FAILED",
       );
     }
+  }
+
+  private async uninstallOptions(kspPath: string, identifier: string): Promise<PlanUninstallOptions> {
+    const inventory = await this.listInstalled(kspPath);
+    const canonicalRoot = await this.fileSystem.realpath(kspPath);
+    const manifest = await this.manifestStore.read();
+    const managed = manifest.mods.filter((mod) => mod.installationPath === canonicalRoot);
+    if (!managed.some((mod) => mod.identifier === identifier)) {
+      throw new InstallServiceError("Only managed mods can be uninstalled.", "NOT_MANAGED");
+    }
+    return {
+      targetIdentifier: identifier,
+      managed,
+      inventory,
+      registryModules: this.registryService.listModules(),
+    };
+  }
+
+  /**
+   * Deletes one managed mod's files and drops its record. If a file cannot be
+   * removed, the record keeps only the files still on disk and the error
+   * propagates, so mods removed earlier in the same uninstall stay removed.
+   */
+  private async removeManagedMod(
+    canonicalRoot: string,
+    manifest: StoredInstallManifest,
+    identifier: string,
+  ): Promise<StoredInstallManifest> {
+    const record = manifest.mods.find(
+      (mod) => mod.identifier === identifier && mod.installationPath === canonicalRoot,
+    );
+    if (record === undefined) {
+      throw new InstallServiceError(`${identifier} is not managed in this installation.`, "NOT_MANAGED");
+    }
+
+    const remaining = new Set(record.files);
+    try {
+      for (const relativePath of [...record.files].sort((left, right) => right.length - left.length)) {
+        await this.removeInstalledPath(canonicalRoot, relativePath);
+        remaining.delete(relativePath);
+      }
+      await this.pruneEmptyParents(canonicalRoot, record.files);
+    } catch (error: unknown) {
+      const remainingFiles = record.files.filter((file) => remaining.has(file));
+      await this.manifestStore.write({
+        schemaVersion: 2,
+        mods:
+          remainingFiles.length === 0
+            ? manifest.mods.filter((mod) => mod !== record)
+            : manifest.mods.map((mod) => (mod === record ? { ...record, files: remainingFiles } : mod)),
+      });
+      throw error;
+    }
+
+    const next: StoredInstallManifest = { schemaVersion: 2, mods: manifest.mods.filter((mod) => mod !== record) };
+    await this.manifestStore.write(next);
+    return next;
   }
 
   private async runInstall(

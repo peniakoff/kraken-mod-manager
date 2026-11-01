@@ -282,6 +282,12 @@ async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
   throw new Error("job did not finish");
 }
 
+async function installWithDependencies(app: ReturnType<typeof createApp>, identifier: string): Promise<void> {
+  const accepted = await request(app).post(`/api/v1/mods/${identifier}/install`).send({ installDependencies: true });
+  expect(accepted.status).toBe(202);
+  expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+}
+
 interface StoredManifestFile {
   schemaVersion: number;
   mods: Array<{ identifier: string; installationPath: string; autoInstalled?: boolean }>;
@@ -332,8 +338,9 @@ describe("mod install API", () => {
       ]),
     );
 
-    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
-    expect(removed.status).toBe(204);
+    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
+    expect(removed.status).toBe(200);
+    expect(removed.body).toEqual({ removed: ["ExampleMod"] });
     expect(() => readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"))).toThrow();
 
     const inventoryAfter = await request(app).get("/api/v1/installed-mods");
@@ -388,12 +395,13 @@ describe("mod install API", () => {
 
     const secondInventory = await request(app).get("/api/v1/installed-mods");
     expect(secondInventory.body.mods).toEqual([]);
-    const wrongUninstall = await request(app).delete("/api/v1/mods/ExampleMod");
+    const wrongUninstall = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
     expect(wrongUninstall.status).toBe(422);
+    expect(wrongUninstall.body.code).toBe("NOT_MANAGED");
 
     await request(app).put("/api/v1/config").send({ installationPath: ksp });
-    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
-    expect(removed.status).toBe(204);
+    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
+    expect(removed.status).toBe(200);
   });
 
   it("keeps only files that remain after a partial uninstall", async () => {
@@ -411,8 +419,9 @@ describe("mod install API", () => {
     manifest.mods[0]!.files.push("GameData/blocked");
     writeFileSync(manifestPath, JSON.stringify(manifest));
 
-    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
+    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
     expect(removed.status).toBe(500);
+    expect(removed.body.code).toBe("UNINSTALL_FAILED");
     const updated = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       mods: Array<{ identifier: string; files: string[] }>;
     };
@@ -756,6 +765,122 @@ describe("mod install API", () => {
     expect(readManifestFile(home).schemaVersion).toBe(2);
     expect(manifestRecord(home, "ExampleMod").autoInstalled).toBe(false);
     expect(manifestRecord(home, "AnotherMod").autoInstalled).toBe(false);
+  });
+
+  it("previews an uninstall with dependents and orphans", async () => {
+    const { app } = await createInstallTestApp();
+    await installWithDependencies(app, "DependentMod");
+
+    const mmPlan = await request(app).post("/api/v1/mods/ModuleManager/uninstall-plan").send({});
+    expect(mmPlan.status).toBe(200);
+    expect(mmPlan.body).toMatchObject({
+      target: { identifier: "ModuleManager", version: "4.2.3" },
+      dependents: [expect.objectContaining({ identifier: "DependentMod" })],
+      orphans: [],
+      brokenUnmanaged: [],
+      warnings: [],
+    });
+
+    const dependentPlan = await request(app).post("/api/v1/mods/DependentMod/uninstall-plan").send({});
+    expect(dependentPlan.status).toBe(200);
+    expect(dependentPlan.body.dependents).toEqual([]);
+    expect(dependentPlan.body.orphans).toEqual([expect.objectContaining({ identifier: "ModuleManager" })]);
+  });
+
+  it("removes dependents together with the target", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    await installWithDependencies(app, "DependentMod");
+
+    const mismatch = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({ alsoRemove: [] });
+    expect(mismatch.status).toBe(409);
+    expect(mismatch.body.code).toBe("UNINSTALL_PLAN_MISMATCH");
+    expect(mismatch.body.message).toContain("DependentMod depends on ModuleManager");
+    expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
+    expect(readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"), "utf8")).toContain("ExampleMod");
+
+    const removed = await request(app)
+      .post("/api/v1/mods/ModuleManager/uninstall")
+      .send({ alsoRemove: ["DependentMod"] });
+    expect(removed.status).toBe(200);
+    expect(removed.body).toEqual({ removed: ["DependentMod", "ModuleManager"] });
+    expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+    expect(() => readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"))).toThrow();
+    expect(readManifestFile(home).mods).toEqual([]);
+  });
+
+  it("removes selected orphans and keeps deselected ones", async () => {
+    const kept = await createInstallTestApp();
+    await installWithDependencies(kept.app, "DependentMod");
+    const keepOrphan = await request(kept.app).post("/api/v1/mods/DependentMod/uninstall").send({ alsoRemove: [] });
+    expect(keepOrphan.status).toBe(200);
+    expect(keepOrphan.body).toEqual({ removed: ["DependentMod"] });
+    expect(readFileSync(join(kept.ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain(
+      "ModuleManager",
+    );
+    expect(readManifestFile(kept.home).mods.map((mod) => mod.identifier)).toEqual(["ModuleManager"]);
+
+    const cleaned = await createInstallTestApp();
+    await installWithDependencies(cleaned.app, "DependentMod");
+    const removeOrphan = await request(cleaned.app)
+      .post("/api/v1/mods/DependentMod/uninstall")
+      .send({ alsoRemove: ["ModuleManager"] });
+    expect(removeOrphan.status).toBe(200);
+    expect(removeOrphan.body).toEqual({ removed: ["DependentMod", "ModuleManager"] });
+    expect(() => readFileSync(join(cleaned.ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+    expect(readManifestFile(cleaned.home).mods).toEqual([]);
+  });
+
+  it("keeps other installations out of the uninstall plan", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    await installWithDependencies(app, "DependentMod");
+
+    const secondKsp = join(home, "SecondKSP");
+    mkdirSync(join(secondKsp, "GameData"), { recursive: true });
+    writeFileSync(join(secondKsp, "KSP.x86_64"), "");
+    writeFileSync(join(secondKsp, "readme.txt"), "Version 1.12.5");
+    await request(app).put("/api/v1/config").send({ installationPath: secondKsp });
+    const direct = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect((await waitForJob(app, direct.body.job.jobId)).status).toBe("succeeded");
+
+    const plan = await request(app).post("/api/v1/mods/ModuleManager/uninstall-plan").send({});
+    expect(plan.status).toBe(200);
+    expect(plan.body.dependents).toEqual([]);
+    expect(plan.body.orphans).toEqual([]);
+
+    const removed = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({});
+    expect(removed.status).toBe(200);
+    expect(removed.body).toEqual({ removed: ["ModuleManager"] });
+    expect(() => readFileSync(join(secondKsp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
+    expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
+    expect(readManifestFile(home).mods.map((mod) => mod.identifier).sort()).toEqual(["DependentMod", "ModuleManager"]);
+  });
+
+  it("no longer removes mods through DELETE", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    const removed = await request(app).delete("/api/v1/mods/ExampleMod");
+    expect(removed.status).toBe(404);
+    expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
+  });
+
+  it("rejects uninstall plans for unmanaged mods", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    mkdirSync(join(ksp, "GameData", "DetectedOnly"), { recursive: true });
+
+    const plan = await request(app).post("/api/v1/mods/DetectedOnly/uninstall-plan").send({});
+    expect(plan.status).toBe(422);
+    expect(plan.body.code).toBe("NOT_MANAGED");
+  });
+
+  it("rejects oversized uninstall selections", async () => {
+    const { app } = await createInstallTestApp();
+    const response = await request(app)
+      .post("/api/v1/mods/ExampleMod/uninstall")
+      .send({ alsoRemove: Array.from({ length: 257 }, (_, index) => `Mod${index}`) });
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe("INVALID_REQUEST");
   });
 
   it("lists available updates for managed mods with older versions", async () => {

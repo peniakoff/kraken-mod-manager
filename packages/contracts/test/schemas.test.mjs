@@ -13,6 +13,9 @@ import {
   modDetailsResponseSchema,
   modVersionsResponseSchema,
   modsQuerySchema,
+  uninstallPlanResponseSchema,
+  uninstallRequestSchema,
+  uninstallResponseSchema,
   modsResponseSchema,
   planModRequestSchema,
   registryResponseSchema,
@@ -204,4 +207,26 @@ test("accepts the relationship union and rejects untagged relationships", () => 
   );
   assert.equal(ckanRelationshipSchema.safeParse({ kind: "unsupported", reason: "nested array" }).success, true);
   assert.equal(ckanRelationshipSchema.safeParse({ name: "A" }).success, false);
+});
+
+test("defaults uninstall alsoRemove to an empty list and bounds it", () => {
+  assert.deepEqual(uninstallRequestSchema.parse({}), { alsoRemove: [] });
+  assert.deepEqual(uninstallRequestSchema.parse({ alsoRemove: ["A"] }), { alsoRemove: ["A"] });
+  assert.equal(uninstallRequestSchema.safeParse({ alsoRemove: Array.from({ length: 256 }, (_, i) => `M${i}`) }).success, true);
+  assert.equal(uninstallRequestSchema.safeParse({ alsoRemove: Array.from({ length: 257 }, (_, i) => `M${i}`) }).success, false);
+  assert.equal(uninstallRequestSchema.safeParse({ alsoRemove: [""] }).success, false);
+  assert.equal(uninstallRequestSchema.safeParse({ alsoRemove: ["x".repeat(257)] }).success, false);
+});
+
+test("accepts an uninstall plan and an uninstall result", () => {
+  const plan = uninstallPlanResponseSchema.parse({
+    target: { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" },
+    dependents: [{ identifier: "DependentMod", name: "Dependent Mod", version: "1.0.0" }],
+    orphans: [{ identifier: "Lib", name: "Lib" }],
+    brokenUnmanaged: [{ identifier: "Detected", name: "Detected" }],
+    warnings: ["something"],
+  });
+  assert.equal(plan.dependents[0]?.identifier, "DependentMod");
+  assert.equal(uninstallPlanResponseSchema.safeParse({ target: { identifier: "A", name: "A" } }).success, false);
+  assert.deepEqual(uninstallResponseSchema.parse({ removed: ["A", "B"] }), { removed: ["A", "B"] });
 });

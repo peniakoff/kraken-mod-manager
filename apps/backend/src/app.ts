@@ -16,6 +16,9 @@ import {
   modsResponseSchema,
   planModRequestSchema,
   registryResponseSchema,
+  uninstallPlanResponseSchema,
+  uninstallRequestSchema,
+  uninstallResponseSchema,
   updateConfigRequestSchema,
   updatesResponseSchema,
 } from "@kraken/contracts";
@@ -389,7 +392,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
   });
 
-  app.delete("/api/v1/mods/:identifier", async (request, response, next) => {
+  app.post("/api/v1/mods/:identifier/uninstall-plan", async (request, response, next) => {
     const identifier = request.params.identifier;
     if (typeof identifier !== "string" || identifier.trim().length === 0) {
       sendError(response, 400, "INVALID_REQUEST", "A mod identifier is required.");
@@ -402,8 +405,33 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
         return;
       }
-      await dependencies.installService.uninstall(kspPath, identifier);
-      response.status(204).send();
+      const plan = await dependencies.installService.planUninstall(kspPath, identifier);
+      response.json(uninstallPlanResponseSchema.parse(plan));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/mods/:identifier/uninstall", async (request, response, next) => {
+    const body = uninstallRequestSchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      sendError(response, 400, "INVALID_REQUEST", "Invalid uninstall request.");
+      return;
+    }
+    const identifier = request.params.identifier;
+    if (typeof identifier !== "string" || identifier.trim().length === 0) {
+      sendError(response, 400, "INVALID_REQUEST", "A mod identifier is required.");
+      return;
+    }
+
+    try {
+      const kspPath = await requireConfiguredInstallation(dependencies);
+      if (kspPath === undefined) {
+        sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
+        return;
+      }
+      const removed = await dependencies.installService.uninstall(kspPath, identifier, body.data.alsoRemove);
+      response.json(uninstallResponseSchema.parse({ removed }));
     } catch (error) {
       next(error);
     }
@@ -551,7 +579,9 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
     if (error instanceof InstallServiceError) {
       const status =
-        error.code === "NOT_CONFIGURED" || error.code === "PLAN_NOT_READY"
+        error.code === "NOT_CONFIGURED" ||
+        error.code === "PLAN_NOT_READY" ||
+        error.code === "UNINSTALL_PLAN_MISMATCH"
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404
