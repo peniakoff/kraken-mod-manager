@@ -164,9 +164,10 @@ plan still reports pending choices.
 - `InstallService.planInstall` and `startInstall` accept `choices` and pass
   them to `resolveInstallPlan`.
 - `startInstall` with `installDependencies: true` recomputes the plan with
-  the same choices. If the plan is not `ok`, it throws a new
-  `PLAN_NOT_READY` error, which the API maps to **409** with the plan's
-  messages. No job is created.
+  the same choices. A `blocked` plan keeps throwing the existing
+  `PLAN_BLOCKED` (HTTP 422). A `choice-required` plan throws a new
+  `PLAN_NOT_READY` error, which the API maps to **409** with the pending
+  choice labels. No job is created in either case.
 - `startInstall` with `installDependencies: false` is unchanged.
 
 ### Registry cache migration
