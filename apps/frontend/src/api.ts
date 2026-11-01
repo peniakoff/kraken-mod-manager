@@ -26,7 +26,11 @@ import {
   type ModVersionsResponse,
   type ModsResponse,
   type RegistryResponse,
+  type UninstallPlanResponse,
+  type UninstallResponse,
   type UpdatesResponse,
+  uninstallPlanResponseSchema,
+  uninstallResponseSchema,
   updatesResponseSchema,
 } from "@kraken/contracts";
 
@@ -145,13 +149,20 @@ export async function installMod(
   });
 }
 
-export async function uninstallMod(identifier: string): Promise<void> {
-  const response = await fetch(`/api/v1/mods/${encodeURIComponent(identifier)}`, { method: "DELETE" });
-  if (!response.ok) {
-    const payload: unknown = await response.json().catch(() => undefined);
-    const error = apiErrorSchema.safeParse(payload);
-    throw new Error(error.success ? error.data.message : `Request failed with HTTP ${response.status}.`);
-  }
+export async function planUninstall(identifier: string): Promise<UninstallPlanResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/uninstall-plan`, uninstallPlanResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
+export async function uninstallMod(identifier: string, alsoRemove: string[]): Promise<UninstallResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/uninstall`, uninstallResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ alsoRemove }),
+  });
 }
 
 export async function getJob(jobId: string): Promise<JobResponse> {

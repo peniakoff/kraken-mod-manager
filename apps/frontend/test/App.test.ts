@@ -222,6 +222,71 @@ describe("App", () => {
     });
   });
 
+  it("previews and confirms an uninstall with dependents", async () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const managed = [
+      { identifier: "DependentMod", name: "Dependent Mod", version: "1.0.0", status: "managed" },
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+    ];
+    let installed = managed;
+    const uninstallBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 2 });
+      if (url === "/api/v1/installed-mods") return json({ mods: installed });
+      if (url === "/api/v1/updates") return json({ updates: [] });
+      if (url === "/api/v1/mods/ModuleManager/uninstall-plan" && init?.method === "POST") {
+        return json({
+          target: { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" },
+          dependents: [{ identifier: "DependentMod", name: "Dependent Mod", version: "1.0.0" }],
+          orphans: [],
+          brokenUnmanaged: [],
+          warnings: [],
+        });
+      }
+      if (url === "/api/v1/mods/ModuleManager/uninstall" && init?.method === "POST") {
+        uninstallBodies.push(JSON.parse(String(init.body)));
+        if (uninstallBodies.length === 1) {
+          return json({ code: "UNINSTALL_PLAN_MISMATCH", message: "Another mod changed. Review the plan again." }, 409);
+        }
+        installed = [];
+        return json({ removed: ["DependentMod", "ModuleManager"] });
+      }
+      if (url.startsWith("/api/v1/mods")) return json({ total: 0, mods: [] });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+    await wrapper.findAll("button").find((button) => button.text() === "Browse mods")!.trigger("click");
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Module Manager"));
+    await wrapper.findAll("button").filter((button) => button.text() === "Uninstall")[1]!.trigger("click");
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Uninstall Module Manager?"));
+    expect(wrapper.text()).toContain("This will also remove:");
+    expect(uninstallBodies).toEqual([]);
+
+    const confirm = () => wrapper.find('[role="dialog"]').findAll("button").find((button) => button.text() === "Uninstall")!;
+    await confirm().trigger("click");
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("Review the plan again."));
+    expect(uninstallBodies).toEqual([{ alsoRemove: ["DependentMod"] }]);
+    expect(wrapper.text()).toContain("Uninstall Module Manager?");
+
+    await confirm().trigger("click");
+    await vi.waitFor(() => expect(wrapper.text()).not.toContain("Uninstall Module Manager?"));
+    expect(uninstallBodies).toHaveLength(2);
+    expect(wrapper.text()).toContain("No managed or detected mods yet.");
+  });
+
   it("shows a connected local service", async () => {
     vi.stubGlobal(
       "fetch",

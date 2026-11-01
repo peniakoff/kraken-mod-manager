@@ -8,6 +8,7 @@ import type {
   InstalledMod,
   KspInstallation,
   RegistryResponse,
+  UninstallPlanResponse,
 } from "@kraken/contracts";
 import {
   getConfig,
@@ -23,6 +24,7 @@ import {
   planModInstall,
   refreshRegistry,
   saveInstallation,
+  planUninstall,
   searchMods,
   uninstallMod,
 } from "./api.js";
@@ -30,6 +32,7 @@ import AppShell from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
 import DashboardView from "./components/DashboardView.vue";
 import SetupView from "./components/SetupView.vue";
+import UninstallDialog from "./components/UninstallDialog.vue";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 import { useInstallQueue } from "./useInstallQueue.js";
 
@@ -60,6 +63,7 @@ const installedMods = ref<InstalledMod[]>([]);
 const availableUpdates = ref<AvailableUpdate[]>([]);
 const pendingInstallIdentifiers = ref<string[]>([]);
 const uninstallingIdentifier = ref<string>();
+const uninstallPrompt = ref<{ mod: InstalledMod; plan: UninstallPlanResponse; error?: string }>();
 const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse; choices: Record<string, string> }>();
 const selectedMod = ref<CkanModule>();
 const selectedModVersions = ref<CkanModule[]>([]);
@@ -402,15 +406,36 @@ async function onUninstall(mod: InstalledMod): Promise<void> {
   uninstallingIdentifier.value = mod.identifier;
   errorMessage.value = undefined;
   try {
-    await uninstallMod(mod.identifier);
-    await loadInstalledMods();
-    await loadUpdates();
+    uninstallPrompt.value = { mod, plan: await planUninstall(mod.identifier) };
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Uninstall failed.";
+    errorMessage.value = error instanceof Error ? error.message : "Uninstall could not be planned.";
     status.value = "error";
   } finally {
     uninstallingIdentifier.value = undefined;
   }
+}
+
+async function confirmUninstall(alsoRemove: string[]): Promise<void> {
+  const prompt = uninstallPrompt.value;
+  if (prompt === undefined) {
+    return;
+  }
+  uninstallingIdentifier.value = prompt.mod.identifier;
+  try {
+    await uninstallMod(prompt.mod.identifier, alsoRemove);
+    uninstallPrompt.value = undefined;
+    await loadInstalledMods();
+    await loadUpdates();
+  } catch (error) {
+    // Keep the dialog open so the user can read why and cancel or retry.
+    uninstallPrompt.value = { ...prompt, error: error instanceof Error ? error.message : "Uninstall failed." };
+  } finally {
+    uninstallingIdentifier.value = undefined;
+  }
+}
+
+function cancelUninstall(): void {
+  uninstallPrompt.value = undefined;
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -500,6 +525,14 @@ onMounted(loadSetup);
       @confirm-dependency-install="confirmDependencyInstall"
       @continue-with-choices="continueWithChoices"
       @cancel-dependency-install="cancelDependencyInstall"
+    />
+    <UninstallDialog
+      v-if="uninstallPrompt !== undefined"
+      :plan="uninstallPrompt.plan"
+      :error="uninstallPrompt.error"
+      :busy="uninstallingIdentifier === uninstallPrompt.mod.identifier"
+      @confirm="confirmUninstall"
+      @cancel="cancelUninstall"
     />
   </AppShell>
 </template>
