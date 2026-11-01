@@ -60,6 +60,16 @@ export {
 
 export { ProviderIndex, type ProviderCandidate } from "./providers.js";
 
+export {
+  EMPTY_REGISTRY_UNINSTALL_WARNING,
+  planUninstall,
+  validateUninstallSelection,
+  type PlanUninstallOptions,
+  type UninstallModuleRef,
+  type UninstallPlan,
+  type UninstallSelection,
+} from "./uninstall.js";
+
 export type KspPlatform = "win32" | "linux" | "darwin";
 export type InstallationSource = "steam" | "gog" | "epic" | "manual";
 

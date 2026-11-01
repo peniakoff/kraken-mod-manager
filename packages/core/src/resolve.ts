@@ -4,13 +4,18 @@
  */
 
 import {
-  compareCkanVersions,
   type CkanModule,
   type CkanAnyOfRelationship,
   type CkanSingleRelationship,
 } from "./ckan.js";
 import type { InstalledModSummary } from "./install.js";
-import { ProviderIndex, versionInRange, type ProviderCandidate } from "./providers.js";
+import {
+  findInstalledMetadata,
+  ProviderIndex,
+  versionInRange,
+  versionMatchesInstalled,
+  type ProviderCandidate,
+} from "./providers.js";
 
 export type InstallPlanStatus = "ok" | "choice-required" | "blocked";
 
@@ -471,42 +476,8 @@ function indexByIdentifier(modules: readonly CkanModule[]): Map<string, CkanModu
   return map;
 }
 
-function findInstalledMetadata(
-  candidates: readonly CkanModule[],
-  installedMod: InstalledModSummary,
-): CkanModule | undefined {
-  if (candidates.length === 0) {
-    return undefined;
-  }
-  if (installedMod.version !== undefined) {
-    const exact = candidates.find((module) => module.version === installedMod.version);
-    if (exact !== undefined) {
-      return exact;
-    }
-  }
-  return candidates.reduce((best, current) =>
-    compareCkanVersions(current.version, best.version) > 0 ? current : best,
-  );
-}
-
 function versionMatchesModule(module: CkanModule, relation: CkanSingleRelationship): boolean {
   return versionInRange(module.version, relation.minVersion, relation.maxVersion);
-}
-
-function versionMatchesInstalled(
-  mod: InstalledModSummary,
-  relation: CkanSingleRelationship,
-  mode: "depends" | "conflicts",
-): boolean {
-  if (mod.version === undefined) {
-    if (mode === "conflicts") {
-      // No version on a detected mod: treat presence as enough to block.
-      return true;
-    }
-    // Detected without version cannot satisfy ranged depends.
-    return relation.minVersion === undefined && relation.maxVersion === undefined;
-  }
-  return versionInRange(mod.version, relation.minVersion, relation.maxVersion);
 }
 
 function dependencyNames(module: CkanModule): string[] {
