@@ -99,4 +99,44 @@ describe("UninstallDialog", () => {
 
     expect(wrapper.emitted("confirm")).toEqual([[["DependentMod", "O1", "O2"]]]);
   });
+
+  it("moves focus into the dialog, traps Tab and restores focus on close", async () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const wrapper = mount(UninstallDialog, { props: { plan, busy: false }, attachTo: document.body });
+
+    const buttons = wrapper.findAll("button");
+    const cancel = buttons.find((button) => button.text() === "Cancel");
+    expect(document.activeElement).toBe(cancel?.element);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    const firstCheckbox = wrapper.find('input[type="checkbox"]').element;
+    expect(document.activeElement).toBe(firstCheckbox);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(cancel?.element);
+
+    wrapper.unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("cancels on Escape without letting the key reach dialogs underneath", async () => {
+    const underneath: string[] = [];
+    const listener = (event: KeyboardEvent) => underneath.push(event.key);
+    window.addEventListener("keydown", listener);
+    const wrapper = mount(UninstallDialog, { props: { plan, busy: false }, attachTo: document.body });
+
+    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(wrapper.emitted("cancel")).toEqual([[]]);
+    expect(underneath).toEqual([]);
+
+    await wrapper.setProps({ busy: true });
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(wrapper.emitted("cancel")).toEqual([[]]);
+
+    wrapper.unmount();
+    window.removeEventListener("keydown", listener);
+  });
 });

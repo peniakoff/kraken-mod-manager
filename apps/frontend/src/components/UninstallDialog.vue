@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { UninstallPlanResponse } from "@kraken/contracts";
-import { ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 
 const props = defineProps<{
   plan: UninstallPlanResponse;
@@ -32,6 +32,57 @@ function confirm(): void {
   emit("confirm", [...dependents, ...orphans]);
 }
 
+const containerRef = ref<HTMLElement>();
+const cancelButtonRef = ref<HTMLButtonElement>();
+let previousActiveElement: Element | null = null;
+
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+// Listens in the capture phase and stops Escape/Tab there, so a dialog
+// underneath (the mod details panel) does not close or steal focus.
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    if (!props.busy) {
+      emit("cancel");
+    }
+    return;
+  }
+  if (event.key !== "Tab" || containerRef.value === undefined) {
+    return;
+  }
+  event.stopPropagation();
+  const focusable = [...containerRef.value.querySelectorAll<HTMLElement>(FOCUSABLE)];
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (first === undefined || last === undefined) {
+    event.preventDefault();
+    return;
+  }
+  const active = document.activeElement;
+  const inside = active !== null && containerRef.value.contains(active);
+  if (event.shiftKey && (!inside || active === first)) {
+    last.focus();
+    event.preventDefault();
+  } else if (!event.shiftKey && (!inside || active === last)) {
+    first.focus();
+    event.preventDefault();
+  }
+}
+
+onMounted(() => {
+  previousActiveElement = document.activeElement;
+  window.addEventListener("keydown", handleKeydown, true);
+  cancelButtonRef.value?.focus();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeydown, true);
+  if (previousActiveElement instanceof HTMLElement && previousActiveElement.isConnected) {
+    previousActiveElement.focus();
+  }
+});
+
 function orphanInputId(identifier: string): string {
   return `uninstall-orphan-${encodeURIComponent(identifier)}`;
 }
@@ -44,7 +95,7 @@ function orphanInputId(identifier: string): string {
     aria-modal="true"
     aria-labelledby="uninstall-dialog-title"
   >
-    <div class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+    <div ref="containerRef" class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
       <h2 id="uninstall-dialog-title" class="text-xl font-semibold">Uninstall {{ plan.target.name }}?</h2>
 
       <div class="mt-4 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
@@ -104,6 +155,7 @@ function orphanInputId(identifier: string): string {
         </button>
         <button
           class="rounded-md border border-slate-600 px-4 py-2 font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          ref="cancelButtonRef"
           type="button"
           :disabled="busy"
           @click="emit('cancel')"
