@@ -234,4 +234,23 @@ describe("ModDetailsPanel component", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(wrapper.emitted("close")).toHaveLength(2);
   });
+
+  it("updates to the available version from the update badge", async () => {
+    const wrapper = mount(ModDetailsPanel, {
+      props: {
+        mod: sampleModV422,
+        versions: [sampleMod, sampleModV422],
+        kspVersion: "1.12.5",
+        installedMods: [{ identifier: "ModuleManager", name: "Module Manager", version: "4.2.2", status: "managed" }],
+        availableUpdates: [
+          { identifier: "ModuleManager", name: "Module Manager", installedVersion: "4.2.2", availableVersion: "4.2.3" },
+        ],
+      },
+    });
+
+    const button = wrapper.find('[data-testid="details-update-btn"]');
+    expect(button.text()).toBe("Update to v4.2.3");
+    await button.trigger("click");
+    expect(wrapper.emitted("install")).toEqual([[sampleMod]]);
+  });
 });

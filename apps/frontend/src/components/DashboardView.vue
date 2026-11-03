@@ -1,18 +1,29 @@
 <script setup lang="ts">
 import type { AvailableUpdate, KspInstallation, RegistryResponse } from "@kraken/contracts";
 
-defineProps<{
-  installation: KspInstallation;
-  installedCount: number;
-  updates: AvailableUpdate[];
-  registry?: RegistryResponse;
-  isRefreshingRegistry: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    installation: KspInstallation;
+    installedCount: number;
+    updates: AvailableUpdate[];
+    registry?: RegistryResponse;
+    isRefreshingRegistry: boolean;
+    installingIdentifiers?: string[];
+    isUpdatingAll?: boolean;
+  }>(),
+  { installingIdentifiers: () => [], isUpdatingAll: false },
+);
 
 defineEmits<{
   refreshRegistry: [];
   browseMods: [];
+  update: [update: AvailableUpdate];
+  updateAll: [];
 }>();
+
+function isBusy(identifier: string): boolean {
+  return props.isUpdatingAll || props.installingIdentifiers.includes(identifier);
+}
 </script>
 
 <template>
@@ -79,27 +90,50 @@ defineEmits<{
             <span v-else>{{ updates.length }} update{{ updates.length === 1 ? "" : "s" }} available.</span>
           </p>
         </div>
-        <button
-          class="rounded-md border border-cyan-400 px-3 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-400/10"
-          type="button"
-          @click="$emit('browseMods')"
-        >
-          Browse mods
-        </button>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-if="updates.length > 0"
+            class="rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            :disabled="isUpdatingAll"
+            @click="$emit('updateAll')"
+          >
+            {{ isUpdatingAll ? "Updating…" : "Update all" }}
+          </button>
+          <button
+            class="rounded-md border border-cyan-400 px-3 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-400/10"
+            type="button"
+            @click="$emit('browseMods')"
+          >
+            Browse mods
+          </button>
+        </div>
       </div>
       <ul v-if="updates.length > 0" class="mt-4 space-y-3">
         <li
           v-for="update in updates"
           :key="update.identifier"
-          class="rounded-lg border border-slate-700 bg-slate-950/50 p-3"
+          class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950/50 p-3"
         >
-          <p class="font-semibold">{{ update.name }}</p>
-          <p class="mt-1 text-sm text-slate-400">
-            {{ update.identifier }} ·
-            <span class="font-mono">{{ update.installedVersion }}</span>
-            →
-            <span class="font-mono text-cyan-300">{{ update.availableVersion }}</span>
-          </p>
+          <div>
+            <p class="font-semibold">{{ update.name }}</p>
+            <p class="mt-1 text-sm text-slate-400">
+              {{ update.identifier }} ·
+              <span class="font-mono">{{ update.installedVersion }}</span>
+              →
+              <span class="font-mono text-cyan-300">{{ update.availableVersion }}</span>
+            </p>
+          </div>
+          <button
+            class="rounded-md border border-cyan-400 px-3 py-1 text-sm font-semibold text-cyan-300 hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            :data-testid="`update-btn-${update.identifier}`"
+            :aria-label="`Update ${update.name} to ${update.availableVersion}`"
+            :disabled="isBusy(update.identifier)"
+            @click="$emit('update', update)"
+          >
+            {{ installingIdentifiers.includes(update.identifier) ? "Updating…" : "Update" }}
+          </button>
         </li>
       </ul>
     </section>
