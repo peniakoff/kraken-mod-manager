@@ -147,6 +147,75 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     );
   }
 
+  function satisfiedByInstalled(
+    relation: CkanSingleRelationship,
+    owner: string,
+    excluded: ReadonlySet<string>,
+  ): InstalledModSummary | undefined {
+    for (const mod of installed.values()) {
+      if (
+        mod.identifier !== owner &&
+        !excluded.has(mod.identifier) &&
+        installedSatisfiesName(mod, relation.name) &&
+        versionMatchesInstalled(mod, relation, "depends")
+      ) {
+        return mod;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * A plan that changes the version of an installed mod (an update, or a
+   * dependency upgrade) must not break installed mods that still need the
+   * old version. A relationship that was already unsatisfied is ignored.
+   */
+  function checkInstalledDependents(): void {
+    const replacements = [...planned.values(), target].filter((module) => installed.has(module.identifier));
+    if (replacements.length === 0) {
+      return;
+    }
+    const replaced = new Set(replacements.map((module) => module.identifier));
+    const nothingReplaced = new Set<string>();
+
+    for (const mod of installed.values()) {
+      if (replaced.has(mod.identifier)) {
+        continue;
+      }
+      for (const relation of installedMetadata(mod)?.relationships?.depends ?? []) {
+        if (relation.kind === "unsupported") {
+          continue;
+        }
+        const alternatives = relationAlternatives(relation);
+        const before = alternatives
+          .map((alternative) => satisfiedByInstalled(alternative, mod.identifier, nothingReplaced))
+          .find((satisfier) => satisfier !== undefined);
+        if (before === undefined || !replaced.has(before.identifier)) {
+          continue;
+        }
+        const stillSatisfied = alternatives.some(
+          (alternative) =>
+            satisfiedByInstalled(alternative, mod.identifier, replaced) !== undefined ||
+            replacements.some(
+              (module) =>
+                module.identifier !== mod.identifier &&
+                ProviderIndex.satisfiesName(module, alternative.name) &&
+                versionMatchesModule(module, alternative),
+            ),
+        );
+        if (stillSatisfied) {
+          continue;
+        }
+        const replacement = replacements.find((module) => module.identifier === before.identifier);
+        conflicts.push({
+          identifier: mod.identifier,
+          conflictingWith: before.identifier,
+          message: `Installed ${mod.identifier} needs ${describeRelation(relation)}, so ${before.identifier} ${before.version ?? "(unknown version)"} to ${replacement?.version ?? "a new version"} would break it.`,
+        });
+      }
+    }
+  }
+
   function collectOptional(module: CkanModule): void {
     const relationships = module.relationships;
     if (relationships === undefined) {
@@ -398,6 +467,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     checkConflicts(module);
   }
   checkInstalledModuleConflicts();
+  checkInstalledDependents();
 
   // A choice raised early can be settled by a provider planned later in the walk.
   const choicesOut: InstallPlanChoice[] = [];
@@ -423,6 +493,18 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     optional,
     choices: choicesOut,
   };
+}
+
+function describeRelation(relation: CkanSingleRelationship | CkanAnyOfRelationship): string {
+  return relationAlternatives(relation)
+    .map((alternative) => {
+      const bounds = [
+        ...(alternative.minVersion !== undefined ? [`>= ${alternative.minVersion}`] : []),
+        ...(alternative.maxVersion !== undefined ? [`<= ${alternative.maxVersion}`] : []),
+      ];
+      return bounds.length > 0 ? `${alternative.name} ${bounds.join(" ")}` : alternative.name;
+    })
+    .join(" or ");
 }
 
 function relationAlternatives(relation: CkanSingleRelationship | CkanAnyOfRelationship): CkanSingleRelationship[] {

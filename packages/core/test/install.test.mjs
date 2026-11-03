@@ -195,3 +195,25 @@ test("findAvailableUpdates reports newer registry versions only", () => {
     },
   ]);
 });
+
+test("findAvailableUpdates offers only versions compatible with the installed KSP", () => {
+  const base = { name: "Module Manager", authors: ["sarbian"], tags: [], provides: [] };
+  const registry = [
+    { ...base, identifier: "ModuleManager", version: "4.2.3", kspVersionMax: "1.12" },
+    { ...base, identifier: "ModuleManager", version: "4.2.4", kspVersionMax: "1.12" },
+    { ...base, identifier: "ModuleManager", version: "5.0.0", kspVersionMin: "1.13" },
+    { ...base, identifier: "OnlyNewKsp", name: "Only New", version: "2.0.0", kspVersion: "1.13" },
+  ];
+  const installed = [
+    { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+    { identifier: "OnlyNewKsp", name: "Only New", version: "1.0.0", status: "managed" },
+  ];
+
+  assert.deepEqual(findAvailableUpdates(installed, registry, "1.12.5"), [
+    { identifier: "ModuleManager", name: "Module Manager", installedVersion: "4.2.3", availableVersion: "4.2.4" },
+  ]);
+  assert.deepEqual(
+    findAvailableUpdates(installed, registry).map((update) => update.availableVersion),
+    ["5.0.0", "2.0.0"],
+  );
+});

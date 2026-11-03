@@ -735,3 +735,102 @@ test("resolves a nested choice across two plan iterations", () => {
   assert.equal(third.status, "ok");
   assert.deepEqual(ids(third.toInstall), ["ConfigRSS", "SunflareRSS", "Scatterer"]);
 });
+
+test("blocks an update that breaks an installed dependent's version range", () => {
+  const mmOld = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" });
+  const mmNew = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.4" });
+  const pinned = mod({
+    identifier: "Pinned",
+    name: "Pinned",
+    version: "1.0.0",
+    relationships: rels({ depends: [{ kind: "single", name: "ModuleManager", maxVersion: "4.2.3" }] }),
+  });
+
+  const plan = resolveInstallPlan({
+    target: mmNew,
+    registryModules: [mmOld, mmNew, pinned],
+    inventory: [
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+      { identifier: "Pinned", name: "Pinned", version: "1.0.0", status: "managed" },
+    ],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.conflicts.length, 1);
+  assert.equal(plan.conflicts[0]?.identifier, "Pinned");
+  assert.equal(plan.conflicts[0]?.conflictingWith, "ModuleManager");
+  assert.match(plan.conflicts[0]?.message ?? "", /Installed Pinned needs ModuleManager <= 4\.2\.3.*ModuleManager 4\.2\.3 to 4\.2\.4/);
+});
+
+test("allows an update that installed dependents still accept", () => {
+  const mmOld = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" });
+  const mmNew = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.4" });
+  const user = mod({
+    identifier: "User",
+    name: "User",
+    version: "1.0.0",
+    relationships: rels({ depends: [{ kind: "single", name: "ModuleManager", minVersion: "4.0.0" }] }),
+  });
+
+  const plan = resolveInstallPlan({
+    target: mmNew,
+    registryModules: [mmOld, mmNew, user],
+    inventory: [
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+      { identifier: "User", name: "User", version: "1.0.0", status: "managed" },
+    ],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test("blocks a dependency upgrade that breaks another installed mod", () => {
+  const libOld = mod({ identifier: "Lib", name: "Lib", version: "1.0.0" });
+  const libNew = mod({ identifier: "Lib", name: "Lib", version: "2.0.0" });
+  const old = mod({
+    identifier: "OldUser",
+    name: "Old User",
+    version: "1.0.0",
+    relationships: rels({ depends: [{ kind: "single", name: "Lib", maxVersion: "1.9.9" }] }),
+  });
+  const target = mod({
+    identifier: "NewMod",
+    name: "New Mod",
+    version: "1.0.0",
+    relationships: rels({ depends: [{ kind: "single", name: "Lib", minVersion: "2.0.0" }] }),
+  });
+
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [libOld, libNew, old, target],
+    inventory: [
+      { identifier: "Lib", name: "Lib", version: "1.0.0", status: "managed" },
+      { identifier: "OldUser", name: "Old User", version: "1.0.0", status: "managed" },
+    ],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.deepEqual(plan.conflicts.map((entry) => [entry.identifier, entry.conflictingWith]), [["OldUser", "Lib"]]);
+});
+
+test("ignores installed dependents whose relationship was already broken", () => {
+  const mmNew = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.4" });
+  const broken = mod({
+    identifier: "Broken",
+    name: "Broken",
+    version: "1.0.0",
+    relationships: rels({ depends: [{ kind: "single", name: "ModuleManager", maxVersion: "3.0.0" }] }),
+  });
+
+  const plan = resolveInstallPlan({
+    target: mmNew,
+    registryModules: [mmNew, broken],
+    inventory: [
+      { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+      { identifier: "Broken", name: "Broken", version: "1.0.0", status: "managed" },
+    ],
+  });
+
+  assert.equal(plan.status, "ok");
+});
