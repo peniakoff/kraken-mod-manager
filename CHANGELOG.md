@@ -5,6 +5,16 @@ All notable changes to Kraken Mod Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Mod updates:** an Update button per mod and an Update all button on the dashboard, and an Update button in the mod details panel. Update all queues every update that can run unattended and lists the ones that need a provider choice or are blocked.
+
+### Fixed
+- Updates are offered only for versions compatible with the installed KSP.
+- A plan that changes an installed mod's version is blocked when an installed mod needs the old version.
+- A two-part `ksp_version_max` such as `1.12` now covers every `1.12.x`, so such mods are no longer hidden by the compatible-only filter.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

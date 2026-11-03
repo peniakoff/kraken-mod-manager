@@ -86,6 +86,7 @@
 
 - [x] **6.1. Dashboard View:**
     *   Display active KSP installation details, total installed mods, and available updates.
+    *   Update a single mod or all mods at once. Updates consider only versions compatible with the installed KSP, and a plan that would break an installed mod's version constraint is blocked.
     *   Keep the project brand mark from `apps/frontend/public/` / `assets/` in the app chrome.
 - [x] **6.2. Mod Browser View:**
     *   Data table / grid displaying mods with search bars, category filters (Gameplay, Parts, Graphics), and game version compatibility flags.

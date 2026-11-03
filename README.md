@@ -104,6 +104,13 @@ too. A sole candidate is picked automatically; when several mods qualify, the
 plan returns `status: "choice-required"` with the candidates, and the client
 re-plans and installs with a `choices` map (`{ "<choice key>": "<identifier>" }`).
 
+`GET /api/v1/updates` lists managed mods with a newer version that supports
+the installed KSP. An update is an install of that version through the same
+plan, so new dependencies and provider choices work as for a first install,
+and the plan is blocked when the new version would break an installed mod that
+needs the old one. The dashboard updates one mod or all of them; Update all
+skips, and lists, updates that need a choice or are blocked.
+
 Uninstall is previewed first (`POST /api/v1/mods/:identifier/uninstall-plan`).
 Managed mods that depend on the target are removed with it, and dependencies
 Kraken installed automatically that nothing needs any more are offered for
