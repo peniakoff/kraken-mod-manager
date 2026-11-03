@@ -154,6 +154,36 @@ function fixtureMetaArchive(
       }),
     },
     {
+      path: "CKAN-meta-master/LegacyMod/LegacyMod-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "LegacyMod",
+        name: "Legacy Mod",
+        author: "Tester",
+        version: "1.0.0",
+        ksp_version_max: "1.12",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "LegacyMod" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/LegacyMod/LegacyMod-2.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "LegacyMod",
+        name: "Legacy Mod",
+        author: "Tester",
+        version: "2.0.0",
+        ksp_version_min: "1.13",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "LegacyMod" }],
+      }),
+    },
+    {
       path: "CKAN-meta-master/RealSolarSystem/RealSolarSystem-1.0.0.ckan",
       content: JSON.stringify({
         identifier: "RealSolarSystem",
@@ -918,6 +948,16 @@ describe("mod install API", () => {
       .send({ alsoRemove: Array.from({ length: 257 }, (_, index) => `Mod${index}`) });
     expect(response.status).toBe(400);
     expect(response.body.code).toBe("INVALID_REQUEST");
+  });
+
+  it("does not offer updates that need a newer KSP", async () => {
+    const { app } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/LegacyMod/install").send({ version: "1.0.0" });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    const updates = await request(app).get("/api/v1/updates");
+    expect(updates.status).toBe(200);
+    expect(updates.body.updates).toEqual([]);
   });
 
   it("lists available updates for managed mods with older versions", async () => {
