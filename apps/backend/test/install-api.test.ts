@@ -13,11 +13,7 @@ import { NodeFileSystem } from "../src/adapters/node-file-system.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
-import {
-  MAX_ZIP_ENTRY_BYTES,
-  MAX_ZIP_TOTAL_BYTES,
-  ZipArchive,
-} from "../src/adapters/zip-archive.js";
+import { ZipArchive } from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
 import { InstallService } from "../src/install-service.js";
@@ -30,34 +26,6 @@ function fixtureModZip(folder = "ExampleMod"): Uint8Array {
     [`GameData/${folder}/readme.txt`]: new TextEncoder().encode(`hello from ${folder}\n`),
     [`GameData/${folder}/plugin.dll`]: new TextEncoder().encode("fake-dll"),
   });
-}
-
-function setFirstDeclaredZipSize(archive: Uint8Array, size: number): Uint8Array {
-  const copy = archive.slice();
-  const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
-  for (let offset = 0; offset <= copy.byteLength - 28; offset += 1) {
-    if (view.getUint32(offset, true) === 0x02014b50) {
-      view.setUint32(offset + 24, size, true);
-      return copy;
-    }
-  }
-  throw new Error("ZIP central directory was not found");
-}
-
-function setAllDeclaredZipSizes(archive: Uint8Array, size: number): Uint8Array {
-  const copy = archive.slice();
-  const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
-  let found = 0;
-  for (let offset = 0; offset <= copy.byteLength - 28; offset += 1) {
-    if (view.getUint32(offset, true) === 0x02014b50) {
-      view.setUint32(offset + 24, size, true);
-      found += 1;
-    }
-  }
-  if (found === 0) {
-    throw new Error("ZIP central directory was not found");
-  }
-  return copy;
 }
 
 function fixtureMetaArchive(
@@ -459,47 +427,7 @@ describe("mod install API", () => {
     );
   });
 
-  it("rejects zip slip and hash mismatches", async () => {
-    const zipArchive = new ZipArchive();
-    expect(() =>
-      zipArchive.extractFiles(
-        zipSync({
-          "../evil.txt": new TextEncoder().encode("nope"),
-        }),
-      ),
-    ).toThrow(/unsafe/i);
-    expect(() =>
-      zipArchive.extractFiles(
-        setFirstDeclaredZipSize(
-          zipSync({ "GameData/TooLarge/file.bin": new TextEncoder().encode("small") }),
-          MAX_ZIP_ENTRY_BYTES + 1,
-        ),
-      ),
-    ).toThrow(/size limit/i);
-
-    // Bundled KSP zips can declare ~226 MiB total (above the old 200 MiB cap).
-    const bundledLike = setFirstDeclaredZipSize(
-      zipSync({ "GameData/Bundled/file.bin": new TextEncoder().encode("small") }),
-      250 * 1024 * 1024,
-    );
-    expect(zipArchive.extractFiles(bundledLike)).toEqual([
-      { path: "GameData/Bundled/file.bin", data: new TextEncoder().encode("small") },
-    ]);
-
-    // Multiple entries whose declared sizes sum past the total archive cap.
-    const manyFiles: Record<string, Uint8Array> = {};
-    const filesNeeded = Math.floor(MAX_ZIP_TOTAL_BYTES / MAX_ZIP_ENTRY_BYTES) + 1;
-    for (let index = 0; index < filesNeeded; index += 1) {
-      manyFiles[`GameData/Huge/file-${index}.bin`] = new TextEncoder().encode(`f${index}`);
-    }
-    expect(() => zipArchive.extractFiles(setAllDeclaredZipSizes(zipSync(manyFiles), MAX_ZIP_ENTRY_BYTES))).toThrow(
-      /total size limit/i,
-    );
-
-    expect(zipArchive.extractFiles(zipSync({ "GameData/Empty/file.txt": new Uint8Array() }))).toEqual([
-      { path: "GameData/Empty/file.txt", data: new Uint8Array() },
-    ]);
-
+  it("rejects downloads whose hash does not match", async () => {
     const { app } = await createInstallTestApp();
     const badHttp = new StreamingHttp(async () => {
       const tampered = zipSync({

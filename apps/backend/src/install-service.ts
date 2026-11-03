@@ -25,7 +25,7 @@ import {
   type StoredInstallManifest,
 } from "./adapters/install-manifest-store.js";
 import { StreamingHttp, StreamingHttpError } from "./adapters/streaming-http.js";
-import { ZipArchive, ZipArchiveError } from "./adapters/zip-archive.js";
+import { ZipArchive, ZipArchiveError, type ZipEntryInfo } from "./adapters/zip-archive.js";
 import { JobStore } from "./job-store.js";
 import type { RegistryService } from "./registry-service.js";
 
@@ -382,12 +382,12 @@ export class InstallService {
     await writeFile(cachePath, download.bytes);
 
     this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
-    const zipEntries = this.zip.extractFiles(download.bytes);
+    const zipEntries = this.zip.listEntries(download.bytes);
     const mappings = resolveInstallMappings(
       module,
       zipEntries.map((entry) => entry.path),
     );
-    const bySource = new Map(zipEntries.map((entry) => [entry.path, entry.data]));
+    const entriesByPath = new Map(zipEntries.map((entry) => [entry.path, entry]));
 
     this.jobStore.update(jobId, { phase: "installing", message: `Copying files into GameData${stepLabel}.` });
     return await this.withManifestMutation(async () => {
@@ -401,6 +401,10 @@ export class InstallService {
       const installedFiles: string[] = [];
 
       try {
+        // Validate every mapping before writing anything, then decompress
+        // only the mapped entries, a batch at a time.
+        const destinationsBySource = new Map<string, string[]>();
+        const selectedEntries: ZipEntryInfo[] = [];
         for (const mapping of mappings) {
           if (!isAllowedDestination(mapping.destinationPath)) {
             throw new InstallPolicyError(
@@ -408,16 +412,28 @@ export class InstallService {
               "INVALID_DESTINATION",
             );
           }
-          const data = bySource.get(mapping.sourcePath);
-          if (data === undefined) {
+          const entry = entriesByPath.get(mapping.sourcePath);
+          if (entry === undefined) {
             throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
           }
+          const destinations = destinationsBySource.get(entry.path);
           const relativeDestination = normalizeSlashPath(mapping.destinationPath);
-          const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
-          installedFiles.push(relativeDestination);
-          await mkdir(dirname(absoluteDestination), { recursive: true });
-          await writeFile(absoluteDestination, data);
+          if (destinations === undefined) {
+            destinationsBySource.set(entry.path, [relativeDestination]);
+            selectedEntries.push(entry);
+          } else {
+            destinations.push(relativeDestination);
+          }
         }
+
+        await this.zip.extractEntries(download.bytes, selectedEntries, async (entry, data) => {
+          for (const relativeDestination of destinationsBySource.get(entry.path) ?? []) {
+            const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
+            installedFiles.push(relativeDestination);
+            await mkdir(dirname(absoluteDestination), { recursive: true });
+            await writeFile(absoluteDestination, data);
+          }
+        });
 
         const installedSet = new Set(installedFiles);
         const staleFiles = previous?.files.filter((file) => !installedSet.has(file)) ?? [];
