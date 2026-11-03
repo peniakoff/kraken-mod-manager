@@ -430,3 +430,11 @@ test("CkanIndex lists versions sorted desc and gets latest", () => {
   assert.equal(searchDesc.total, 1);
   assert.equal(searchDesc.mods[0]?.identifier, "MechJeb2");
 });
+
+test("treats a ksp_version_max without a patch number as covering every patch", () => {
+  const module = { identifier: "X", name: "X", version: "1.0", authors: [], tags: [], provides: [], kspVersionMax: "1.12" };
+  assert.equal(isCompatibleWithKsp(module, "1.12.5"), true);
+  assert.equal(isCompatibleWithKsp(module, "1.12"), true);
+  assert.equal(isCompatibleWithKsp(module, "1.13.0"), false);
+  assert.equal(isCompatibleWithKsp({ ...module, kspVersionMax: "1.12.3" }, "1.12.5"), false);
+});

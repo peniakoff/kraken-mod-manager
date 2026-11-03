@@ -359,7 +359,9 @@ export function isCompatibleWithKsp(module: CkanModule, kspVersion: string): boo
 
   if (module.kspVersionMax !== undefined) {
     const max = normalizeVersionComponents(module.kspVersionMax);
-    if (max === undefined || compareVersionComponents(target, max) > 0) {
+    // A max of "1.12" covers every 1.12.x, as CKAN reads it, so only the
+    // components the max actually names are compared.
+    if (max === undefined || compareVersionComponents(target.slice(0, max.length), max) > 0) {
       return false;
     }
   }
