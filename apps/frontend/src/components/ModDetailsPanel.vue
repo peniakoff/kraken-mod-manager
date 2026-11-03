@@ -47,6 +47,11 @@ const availableUpdate = computed(() => {
   return props.availableUpdates.find((u) => u.identifier === props.mod.identifier);
 });
 
+const updateTarget = computed(() => {
+  const update = availableUpdate.value;
+  return update === undefined ? undefined : props.versions.find((v) => v.version === update.availableVersion);
+});
+
 const isInstalled = computed(() => installedMod.value !== undefined);
 const isManaged = computed(() => installedMod.value?.status === "managed");
 
@@ -249,6 +254,16 @@ onUnmounted(() => {
             @click="installedMod && emit('uninstall', installedMod)"
           >
             {{ isUninstalling ? "Uninstalling…" : "Uninstall" }}
+          </button>
+          <button
+            v-if="updateTarget !== undefined && updateTarget.download !== undefined"
+            class="rounded-md border border-violet-400 px-3 py-1.5 text-sm font-semibold text-violet-300 hover:bg-violet-400/10 disabled:opacity-50"
+            type="button"
+            :disabled="isInstalling || isUninstalling"
+            data-testid="details-update-btn"
+            @click="emit('install', updateTarget)"
+          >
+            Update to v{{ updateTarget.version }}
           </button>
           <button
             v-if="currentVersionMod.download !== undefined"

@@ -3,7 +3,13 @@
  * File-system I/O stays in adapters; this module is pure policy.
  */
 
-import { compareCkanVersions, type CkanDownloadHash, type CkanInstallStanza, type CkanModule } from "./ckan.js";
+import {
+  compareCkanVersions,
+  isCompatibleWithKsp,
+  type CkanDownloadHash,
+  type CkanInstallStanza,
+  type CkanModule,
+} from "./ckan.js";
 
 export type InstalledModStatus = "managed" | "detected";
 
@@ -124,13 +130,18 @@ export function resolveInstallMappings(
 /**
  * Compare installed mods against the registry and return mods with a newer
  * published version. Installed entries without a known version are skipped.
+ * With `kspVersion`, only versions compatible with that game version count.
  */
 export function findAvailableUpdates(
   installed: readonly InstalledModSummary[],
   registryModules: readonly CkanModule[],
+  kspVersion?: string,
 ): AvailableUpdate[] {
   const latestByIdentifier = new Map<string, CkanModule>();
   for (const module of registryModules) {
+    if (kspVersion !== undefined && !isCompatibleWithKsp(module, kspVersion)) {
+      continue;
+    }
     const current = latestByIdentifier.get(module.identifier);
     if (current === undefined || compareCkanVersions(module.version, current.version) > 0) {
       latestByIdentifier.set(module.identifier, module);

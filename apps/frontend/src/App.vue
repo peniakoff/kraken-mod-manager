@@ -62,6 +62,7 @@ const isSearching = ref(false);
 const installedMods = ref<InstalledMod[]>([]);
 const availableUpdates = ref<AvailableUpdate[]>([]);
 const pendingInstallIdentifiers = ref<string[]>([]);
+const isUpdatingAll = ref(false);
 const uninstallingIdentifier = ref<string>();
 const uninstallPrompt = ref<{ mod: InstalledMod; plan: UninstallPlanResponse; error?: string }>();
 const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse; choices: Record<string, string> }>();
@@ -347,6 +348,9 @@ async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Re
   if (plan.status === "choice-required" || missing.length > 0) {
     setInstallPending(mod.identifier, false);
     dependencyPrompt.value = { mod, plan, choices };
+    // The dependency dialog lives in the browse view; an update started from
+    // the dashboard has to switch there for the user to see it.
+    activeView.value = "browse";
     return;
   }
 
@@ -396,6 +400,62 @@ async function startInstallJob(
     status.value = "error";
   } finally {
     setInstallPending(mod.identifier, false);
+  }
+}
+
+async function findUpdateModule(update: AvailableUpdate): Promise<CkanModule> {
+  const { versions } = await getModVersions(update.identifier);
+  const module = versions.find((candidate) => candidate.version === update.availableVersion);
+  if (module === undefined) {
+    throw new Error(`${update.name} ${update.availableVersion} is no longer in the registry.`);
+  }
+  return module;
+}
+
+async function onUpdate(update: AvailableUpdate): Promise<void> {
+  errorMessage.value = undefined;
+  try {
+    await onInstall(await findUpdateModule(update));
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Update could not be started.";
+    status.value = "error";
+  }
+}
+
+/**
+ * Queues every update that can run unattended. Updates that need a provider
+ * choice or are blocked are skipped and listed, instead of stopping the run.
+ */
+async function onUpdateAll(): Promise<void> {
+  isUpdatingAll.value = true;
+  errorMessage.value = undefined;
+  const skipped: string[] = [];
+  try {
+    for (const update of availableUpdates.value) {
+      try {
+        const mod = await findUpdateModule(update);
+        const plan = await planModInstall(mod.identifier, mod.version);
+        if (plan.status === "choice-required") {
+          skipped.push(`${update.name} (needs a provider choice)`);
+          continue;
+        }
+        if (plan.status === "blocked") {
+          const details = [...plan.conflicts, ...plan.unmet].map((entry) => entry.message).join(" ");
+          skipped.push(`${update.name} (${details.length > 0 ? details : "blocked"})`);
+          continue;
+        }
+        const needsDependencies = plan.toInstall.some((entry) => entry.identifier !== mod.identifier);
+        await startInstallJob(mod, needsDependencies);
+      } catch (error) {
+        skipped.push(`${update.name} (${error instanceof Error ? error.message : "could not be planned"})`);
+      }
+    }
+  } finally {
+    isUpdatingAll.value = false;
+  }
+  if (skipped.length > 0) {
+    errorMessage.value = `Some updates were skipped: ${skipped.join("; ")}`;
+    status.value = "error";
   }
 }
 
@@ -503,8 +563,12 @@ onMounted(loadSetup);
       :updates="availableUpdates"
       :registry="registry"
       :is-refreshing-registry="isRefreshingRegistry"
+      :installing-identifiers="installingIdentifiers"
+      :is-updating-all="isUpdatingAll"
       @refresh-registry="onRefreshRegistry"
       @browse-mods="activeView = 'browse'"
+      @update="onUpdate"
+      @update-all="onUpdateAll"
     />
     <BrowseModsView
       v-else

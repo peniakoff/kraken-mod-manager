@@ -26,6 +26,7 @@ import {
   discoverInstallations,
   findAvailableUpdates,
   type FileSystemPort,
+  type KspInstallation,
   type PlatformPort,
   validateKspInstallation,
 } from "@kraken/core";
@@ -317,14 +318,18 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
 
   app.get("/api/v1/updates", async (_request, response, next) => {
     try {
-      const kspPath = await requireConfiguredInstallation(dependencies);
-      if (kspPath === undefined) {
+      const installation = await requireConfiguredKspInstallation(dependencies);
+      if (installation === undefined) {
         sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
         return;
       }
       await dependencies.registryService.ensureLoaded();
-      const installed = await dependencies.installService.listInstalled(kspPath);
-      const updates = findAvailableUpdates(installed, dependencies.registryService.listModules());
+      const installed = await dependencies.installService.listInstalled(installation.path);
+      const updates = findAvailableUpdates(
+        installed,
+        dependencies.registryService.listModules(),
+        installation.version,
+      );
       response.json(updatesResponseSchema.parse({ updates }));
     } catch (error) {
       next(error);
@@ -605,17 +610,20 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
 }
 
 async function requireConfiguredInstallation(dependencies: AppDependencies): Promise<string | undefined> {
+  return (await requireConfiguredKspInstallation(dependencies))?.path;
+}
+
+async function requireConfiguredKspInstallation(dependencies: AppDependencies): Promise<KspInstallation | undefined> {
   const config = await dependencies.configStore.read();
   if (config === undefined) {
     return undefined;
   }
-  const installation = await validateKspInstallation(
+  return validateKspInstallation(
     dependencies.fileSystem,
     dependencies.platform.platform,
     config.activeInstallationPath,
     "manual",
   );
-  return installation?.path;
 }
 
 function sendError(response: express.Response, status: number, code: string, message: string): void {

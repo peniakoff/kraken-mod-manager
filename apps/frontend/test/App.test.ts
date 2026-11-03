@@ -297,6 +297,90 @@ describe("App", () => {
     expect(wrapper.text()).toContain("No managed or detected mods yet.");
   });
 
+  it("updates one mod from the dashboard and reports updates that need attention", async () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const module = (identifier: string, version: string) => ({
+      identifier,
+      name: identifier,
+      authors: ["Tester"],
+      version,
+      tags: [],
+      download: `https://example.test/${identifier}-${version}.zip`,
+    });
+    const ref = (identifier: string, version: string) => ({ identifier, name: identifier, version });
+    const okPlan = (identifier: string, version: string, extra: Array<{ identifier: string; version: string }> = []) => ({
+      status: "ok",
+      target: ref(identifier, version),
+      toInstall: [...extra.map((entry) => ref(entry.identifier, entry.version)), ref(identifier, version)],
+      alreadySatisfied: [],
+      conflicts: [],
+      unmet: [],
+      optional: [],
+      choices: [],
+    });
+    const installBodies: Record<string, unknown> = {};
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 3 });
+      if (url === "/api/v1/installed-mods") return json({ mods: [] });
+      if (url === "/api/v1/updates") {
+        return json({
+          updates: [
+            { identifier: "Alpha", name: "Alpha", installedVersion: "1.0.0", availableVersion: "1.1.0" },
+            { identifier: "Beta", name: "Beta", installedVersion: "1.0.0", availableVersion: "2.0.0" },
+            { identifier: "Gamma", name: "Gamma", installedVersion: "1.0.0", availableVersion: "1.2.0" },
+          ],
+        });
+      }
+      const versions = /^\/api\/v1\/mods\/(\w+)\/versions$/.exec(url);
+      if (versions !== null) {
+        const identifier = versions[1]!;
+        const latest = { Alpha: "1.1.0", Beta: "2.0.0", Gamma: "1.2.0" }[identifier]!;
+        return json({ identifier, versions: [module(identifier, latest), module(identifier, "1.0.0")] });
+      }
+      if (url === "/api/v1/mods/Alpha/plan") return json(okPlan("Alpha", "1.1.0", [{ identifier: "NewLib", version: "1.0.0" }]));
+      if (url === "/api/v1/mods/Beta/plan") {
+        return json({
+          ...okPlan("Beta", "2.0.0"),
+          status: "blocked",
+          conflicts: [{ identifier: "Pinned", conflictingWith: "Beta", message: "Installed Pinned needs Beta <= 1.9." }],
+        });
+      }
+      if (url === "/api/v1/mods/Gamma/plan") return json(okPlan("Gamma", "1.2.0"));
+      const install = /^\/api\/v1\/mods\/(\w+)\/install$/.exec(url);
+      if (install !== null && init?.method === "POST") {
+        const identifier = install[1]!;
+        installBodies[identifier] = JSON.parse(String(init.body));
+        return json(
+          { job: { jobId: `job-${identifier}`, kind: "install", identifier, status: "queued", phase: "queued" } },
+          202,
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("3 updates available."));
+
+    await wrapper.find('[data-testid="update-btn-Gamma"]').trigger("click");
+    await vi.waitFor(() => expect(installBodies.Gamma).toEqual({ version: "1.2.0", installDependencies: false }));
+
+    await wrapper.findAll("button").find((button) => button.text() === "Update all")!.trigger("click");
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Some updates were skipped"));
+    expect(installBodies.Alpha).toEqual({ version: "1.1.0", installDependencies: true });
+    expect(installBodies.Beta).toBeUndefined();
+    expect(wrapper.text()).toContain("Beta (Installed Pinned needs Beta <= 1.9.)");
+  });
+
   it("shows a connected local service", async () => {
     vi.stubGlobal(
       "fetch",
