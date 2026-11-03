@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updates are offered only for versions compatible with the installed KSP.
 - A plan that changes an installed mod's version is blocked when an installed mod needs the old version.
 - A two-part `ksp_version_max` such as `1.12` now covers every `1.12.x`, so such mods are no longer hidden by the compatible-only filter.
+- Large mod archives such as Parallax-StockTextures (over 2 GiB unpacked) install. Archives are extracted in batches of at most 256 MiB instead of all at once in memory, and the uncompressed archive limit rises from 2 GiB to 8 GiB.
 
 ## [0.3.0] - 2026-11-01
 
