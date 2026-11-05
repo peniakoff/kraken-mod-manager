@@ -5,6 +5,7 @@ import type {
   CkanModule,
   DirectoryListingResponse,
   InstallPlanResponse,
+  InstallRecoveryReport,
   InstalledMod,
   KspInstallation,
   RegistryResponse,
@@ -14,6 +15,7 @@ import {
   getConfig,
   getDirectories,
   getHealth,
+  getInstallRecovery,
   getInstallations,
   getInstalledMods,
   getModDetails,
@@ -33,6 +35,7 @@ import AppShell, { type AppView } from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
 import DashboardView from "./components/DashboardView.vue";
 import InstalledModsView from "./components/InstalledModsView.vue";
+import RecoveryNotice from "./components/RecoveryNotice.vue";
 import SetupView from "./components/SetupView.vue";
 import UninstallDialog from "./components/UninstallDialog.vue";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
@@ -65,6 +68,8 @@ const searchTotal = ref(0);
 const isSearching = ref(false);
 
 const installedMods = ref<InstalledMod[]>([]);
+/** What the service undid at startup; cleared once the user dismisses it. */
+const recoveryReport = ref<InstallRecoveryReport>();
 const availableUpdates = ref<AvailableUpdate[]>([]);
 const pendingInstallIdentifiers = ref<string[]>([]);
 const isUpdatingAll = ref(false);
@@ -121,6 +126,7 @@ async function loadSetup(): Promise<void> {
       installation.value = config.installation;
       candidates.value = [];
       activeView.value = "dashboard";
+      await loadRecoveryReport();
       await loadConfiguredState(config.installation);
     } else {
       installation.value = undefined;
@@ -150,6 +156,15 @@ async function loadConfiguredState(active: KspInstallation): Promise<void> {
   } else {
     searchResults.value = [];
     searchTotal.value = 0;
+  }
+}
+
+// The report only changes when the service restarts, so it is read once per page load.
+async function loadRecoveryReport(): Promise<void> {
+  try {
+    recoveryReport.value = await getInstallRecovery();
+  } catch (error) {
+    reportError(error, "Could not check for interrupted installs.");
   }
 }
 
@@ -556,6 +571,7 @@ onMounted(loadSetup);
     @dismiss-install="dismissInstall"
     @clear-finished-installs="clearFinishedInstalls"
   >
+    <RecoveryNotice v-if="recoveryReport !== undefined" :report="recoveryReport" @dismiss="recoveryReport = undefined" />
     <DashboardView
       v-if="activeView === 'dashboard'"
       :installation="installation"
