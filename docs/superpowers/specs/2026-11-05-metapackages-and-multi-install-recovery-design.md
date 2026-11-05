@@ -45,7 +45,7 @@ installation, and any UI to manage the list of known installations.
 - Inventory: a metapackage record without a GameData folder is listed as
   managed.
 
-### UI
+### Install UI
 
 - The Install button shows when `download` exists or `kind === "metapackage"`
   (browse rows, details panel, update actions).
@@ -86,7 +86,7 @@ installation, and any UI to manage the list of known installations.
 - `untrackedBackups` becomes `{ installationPath, count, directory }[]`
   (optional or empty when none). Only this repo's frontend consumes it.
 
-### UI
+### Recovery notice
 
 - `RecoveryNotice` shows the installation path (via `PathText`) next to each
   rolled-back job, failure and backup group whose `installationPath` is not the
