@@ -205,7 +205,8 @@ export function buildInventory(
   return [...byIdentifier.values()].sort((left, right) => left.identifier.localeCompare(right.identifier));
 }
 
-export function verifyDownloadHash(bytes: Uint8Array, expected: CkanDownloadHash | undefined, digests: {
+/** Compares digests computed while downloading with the hashes the registry declares. */
+export function verifyDownloadHash(expected: CkanDownloadHash | undefined, digests: {
   sha1?: string;
   sha256?: string;
 }): void {
@@ -222,8 +223,6 @@ export function verifyDownloadHash(bytes: Uint8Array, expected: CkanDownloadHash
       throw new InstallPolicyError("Download SHA-1 does not match metadata.", "HASH_MISMATCH");
     }
   }
-  // bytes reserved for future streaming digests; currently digests are precomputed by adapters
-  void bytes;
 }
 
 function defaultInstallMappings(files: readonly string[]): InstallMapping[] {

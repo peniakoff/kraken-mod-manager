@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 export interface DownloadProgress {
   bytesReceived: number;
@@ -6,6 +11,12 @@ export interface DownloadProgress {
 }
 
 export type DownloadProgressListener = (progress: DownloadProgress) => void;
+
+export interface DownloadResult {
+  bytesReceived: number;
+  sha1: string;
+  sha256: string;
+}
 
 export class StreamingHttpError extends Error {
   constructor(
@@ -20,10 +31,16 @@ export class StreamingHttpError extends Error {
 export class StreamingHttp {
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
 
-  async get(
+  /**
+   * Streams the response body into a new file at `destinationPath` and hashes
+   * it on the way, so memory use does not depend on the archive size. The
+   * file must not exist yet; on any failure it is removed.
+   */
+  async download(
     url: string,
+    destinationPath: string,
     onProgress?: DownloadProgressListener,
-  ): Promise<{ bytes: Uint8Array; sha1: string; sha256: string }> {
+  ): Promise<DownloadResult> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -32,9 +49,7 @@ export class StreamingHttp {
         redirect: "follow",
       });
     } catch (error: unknown) {
-      throw new StreamingHttpError(
-        `Could not download archive: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new StreamingHttpError(`Could not download archive: ${getErrorMessage(error)}`);
     }
 
     if (!response.ok) {
@@ -47,52 +62,42 @@ export class StreamingHttp {
     const bytesTotal = Number.isFinite(parsedTotal) ? parsedTotal : undefined;
     const sha1 = createHash("sha1");
     const sha256 = createHash("sha256");
-    const chunks: Uint8Array[] = [];
     let bytesReceived = 0;
 
-    if (response.body === null) {
-      const buffer = new Uint8Array(await response.arrayBuffer());
-      sha1.update(buffer);
-      sha256.update(buffer);
-      const progress: DownloadProgress = { bytesReceived: buffer.byteLength };
-      if (bytesTotal !== undefined) {
-        progress.bytesTotal = bytesTotal;
+    const hashing = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        sha1.update(chunk);
+        sha256.update(chunk);
+        bytesReceived += chunk.byteLength;
+        onProgress?.(bytesTotal === undefined ? { bytesReceived } : { bytesReceived, bytesTotal });
+        callback(null, chunk);
+      },
+    });
+    const source =
+      response.body === null
+        ? Readable.from([])
+        : // Safe: fetch bodies are WHATWG byte streams, which Node's web stream type describes.
+          Readable.fromWeb(response.body as NodeReadableStream<Uint8Array>);
+
+    try {
+      // "wx" refuses to follow or replace an existing file at the path.
+      await pipeline(source, hashing, createWriteStream(destinationPath, { flags: "wx", mode: 0o600 }));
+    } catch (error: unknown) {
+      if (isAlreadyExists(error)) {
+        throw new StreamingHttpError(`Download target already exists: ${destinationPath}`);
       }
-      onProgress?.(progress);
-      return { bytes: buffer, sha1: sha1.digest("hex"), sha256: sha256.digest("hex") };
+      await rm(destinationPath, { force: true });
+      throw new StreamingHttpError(`Could not download archive: ${getErrorMessage(error)}`);
     }
 
-    const reader = response.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      if (value === undefined) {
-        continue;
-      }
-      chunks.push(value);
-      sha1.update(value);
-      sha256.update(value);
-      bytesReceived += value.byteLength;
-      const progress: DownloadProgress = { bytesReceived };
-      if (bytesTotal !== undefined) {
-        progress.bytesTotal = bytesTotal;
-      }
-      onProgress?.(progress);
-    }
-
-    const bytes = concatChunks(chunks, bytesReceived);
-    return { bytes, sha1: sha1.digest("hex"), sha256: sha256.digest("hex") };
+    return { bytesReceived, sha1: sha1.digest("hex"), sha256: sha256.digest("hex") };
   }
 }
 
-function concatChunks(chunks: readonly Uint8Array[], totalLength: number): Uint8Array {
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
+function isAlreadyExists(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
