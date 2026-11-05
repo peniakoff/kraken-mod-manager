@@ -1,7 +1,7 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
-import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
+import { RegistryCacheStore, type StoredRegistryCache } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
 import { ZipArchive } from "../src/adapters/zip-archive.js";
@@ -12,7 +12,7 @@ import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { HttpPort, PlatformPort } from "@kraken/core";
 import { gzipSync } from "node:zlib";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -299,3 +299,76 @@ describe("tar.gz archive adapter", () => {
     ]);
   });
 });
+
+describe("CKAN registry cache recovery", () => {
+  async function writeCache(home: string, contents: unknown): Promise<void> {
+    await mkdir(join(home, "cache"), { recursive: true });
+    await writeFile(join(home, "cache", "registry.json"), JSON.stringify(contents));
+  }
+
+  const emptyCache = {
+    schemaVersion: 3,
+    sourceUrl: "https://example.test/CKAN-meta.tar.gz",
+    updatedAt: "2026-11-01T00:00:00.000Z",
+    parseErrors: 0,
+    modules: [],
+  };
+
+  it("rebuilds a registry cache it cannot read when the registry is refreshed", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await writeCache(home, { schemaVersion: 99 });
+    expect((await request(app).get("/api/v1/registry")).body.code).toBe("REGISTRY_CACHE_ERROR");
+
+    const refreshed = await request(app).post("/api/v1/registry/refresh");
+
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.status).toBe("ready");
+    expect((await request(app).get("/api/v1/registry")).body.status).toBe("ready");
+    const stored = JSON.parse(await readFile(join(home, "cache", "registry.json"), "utf8")) as StoredRegistryCache;
+    expect(stored.schemaVersion).toBe(3);
+    expect(stored.modules.length).toBeGreaterThan(0);
+  });
+
+  it("reads the cache again after a failed read instead of repeating the error", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await writeCache(home, { schemaVersion: 99 });
+    expect((await request(app).get("/api/v1/registry")).status).toBe(500);
+
+    await writeCache(home, emptyCache);
+
+    const registry = await request(app).get("/api/v1/registry");
+    expect(registry.status).toBe(200);
+    expect(registry.body).toMatchObject({ status: "ready", updatedAt: "2026-11-01T00:00:00.000Z" });
+  });
+
+  it("keeps a refreshed registry when an older cache read finishes later", async () => {
+    let releaseRead: () => void = () => undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    class SlowCacheStore extends RegistryCacheStore {
+      override async read(): Promise<StoredRegistryCache | undefined> {
+        await readGate;
+        return emptyCache as StoredRegistryCache;
+      }
+      override async write(): Promise<void> {
+        // The refreshed snapshot stays in memory only.
+      }
+    }
+    const registryService = new RegistryService(
+      { async get() { return fixtureArchive(); } },
+      new TarGzArchive(),
+      new SlowCacheStore("unused"),
+      "https://example.test/CKAN-meta.tar.gz",
+    );
+
+    const loading = registryService.ensureLoaded();
+    const refreshed = await registryService.refresh();
+    releaseRead();
+    await loading;
+
+    expect(refreshed.moduleCount).toBeGreaterThan(0);
+    expect(registryService.getStatus()).toEqual(refreshed);
+  });
+});
+

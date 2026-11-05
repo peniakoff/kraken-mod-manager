@@ -45,7 +45,16 @@ export class RegistryService {
 
   async ensureLoaded(): Promise<void> {
     if (this.loadPromise === undefined) {
-      this.loadPromise = this.loadFromCache();
+      const loading = this.loadFromCache();
+      this.loadPromise = loading;
+      // A failed read is not remembered, so the next call reads the file
+      // again and picks up a cache that was fixed or rebuilt in the meantime.
+      // The error itself still reaches every caller awaiting this read.
+      loading.catch(() => {
+        if (this.loadPromise === loading) {
+          this.loadPromise = undefined;
+        }
+      });
     }
     await this.loadPromise;
   }
@@ -97,6 +106,9 @@ export class RegistryService {
       const snapshot = await refreshRegistry(this.http, this.archive, this.sourceUrl);
       await this.cacheStore.write(snapshot);
       this.applySnapshot(snapshot);
+      // The registry in memory is now newer than anything a pending or later
+      // cache read could load.
+      this.loadPromise = Promise.resolve();
       return this.getStatus();
     } catch (error: unknown) {
       if (error instanceof RegistryServiceError || error instanceof RegistryCacheError) {
@@ -112,7 +124,8 @@ export class RegistryService {
   private async loadFromCache(): Promise<void> {
     try {
       const cache = await this.cacheStore.read();
-      if (cache === undefined) {
+      // A refresh that finished while the file was being read has newer data.
+      if (cache === undefined || this.snapshot !== undefined) {
         return;
       }
       this.applySnapshot({

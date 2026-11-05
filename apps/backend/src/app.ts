@@ -215,7 +215,8 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
 
   app.post("/api/v1/registry/refresh", async (_request, response, next) => {
     try {
-      await dependencies.registryService.ensureLoaded();
+      // No cache read first: a refresh replaces the cache, which is how an
+      // unreadable one gets fixed.
       response.json(registryResponseSchema.parse(await dependencies.registryService.refresh()));
     } catch (error) {
       next(error);

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mods whose metadata lists several download URLs (CKAN spec v1.34 mirrors, for example GitHub and SpaceDock) can be installed again; they had no Install button. Kraken tries the URLs in order, moves on when a download fails or the file does not match its hash, and reports every attempt if none works. Download URLs other than http and https are ignored. The registry cache format changes, so refresh the registry once after updating.
 - An install that was interrupted (for example by closing Kraken or a crash mid-install) is undone at the next start: files it had written are removed, the previous version is moved back from `.kraken-backup` and the install record is restored, including for every dependency installed in the same job. The app shows what was undone; anything that could not be undone stays in place and is reported.
 
+- "Refresh registry" repairs a registry cache that cannot be read (damaged, or written by a newer Kraken). Before, one failed read was remembered until Kraken restarted, and refreshing needed a readable cache first, so the only way out was to delete the file by hand.
+- An error while loading the installation (such as an unreadable registry cache) no longer marks the local service as unavailable; it is shown in the error bar while the status light stays green.
+
 ### Security
 - The standalone binaries now embed Node.js 24.22.2 instead of 24.18.0, which picks up two Node security releases.
 - Updated dependencies, including express 5.3 (fixes in `body-parser`, `qs` and `proxy-addr`), express-rate-limit 8.7 (`ip-address`), zod 4.6 and Vue 3.5.44, plus the build and test tooling (Vite 8.3, Vitest 5, jsdom 30). Dependency installs now skip releases younger than seven days.
