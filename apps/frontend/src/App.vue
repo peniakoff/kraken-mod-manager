@@ -28,15 +28,14 @@ import {
   searchMods,
   uninstallMod,
 } from "./api.js";
-import AppShell from "./components/AppShell.vue";
+import AppShell, { type AppView } from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
 import DashboardView from "./components/DashboardView.vue";
+import InstalledModsView from "./components/InstalledModsView.vue";
 import SetupView from "./components/SetupView.vue";
 import UninstallDialog from "./components/UninstallDialog.vue";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 import { useInstallQueue } from "./useInstallQueue.js";
-
-type AppView = "dashboard" | "browse";
 
 const status = ref<"checking" | "ready" | "unavailable" | "error">("checking");
 const version = ref<string>();
@@ -349,7 +348,7 @@ async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Re
     setInstallPending(mod.identifier, false);
     dependencyPrompt.value = { mod, plan, choices };
     // The dependency dialog lives in the browse view; an update started from
-    // the dashboard has to switch there for the user to see it.
+    // the overview or the installed list has to switch there to be seen.
     activeView.value = "browse";
     return;
   }
@@ -552,6 +551,9 @@ onMounted(loadSetup);
     :status="status"
     :error-message="errorMessage"
     :install-jobs="installJobs"
+    :installed-count="installedMods.length"
+    :ksp-version="installation.version"
+    :registry="registry"
     @navigate="activeView = $event"
     @dismiss-install="dismissInstall"
     @clear-finished-installs="clearFinishedInstalls"
@@ -566,9 +568,17 @@ onMounted(loadSetup);
       :installing-identifiers="installingIdentifiers"
       :is-updating-all="isUpdatingAll"
       @refresh-registry="onRefreshRegistry"
-      @browse-mods="activeView = 'browse'"
       @update="onUpdate"
       @update-all="onUpdateAll"
+    />
+    <InstalledModsView
+      v-else-if="activeView === 'installed'"
+      :installed-mods="installedMods"
+      :available-updates="availableUpdates"
+      :installing-identifiers="installingIdentifiers"
+      :uninstalling-identifier="uninstallingIdentifier"
+      @uninstall="onUninstall"
+      @update="onUpdate"
     />
     <BrowseModsView
       v-else

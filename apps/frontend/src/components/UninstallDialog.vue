@@ -90,63 +90,69 @@ function orphanInputId(identifier: string): string {
 
 <template>
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+    class="dialog-backdrop"
     role="dialog"
     aria-modal="true"
     aria-labelledby="uninstall-dialog-title"
   >
-    <div ref="containerRef" class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+    <div ref="containerRef" class="dialog">
       <h2 id="uninstall-dialog-title" class="text-xl font-semibold">Uninstall {{ plan.target.name }}?</h2>
 
-      <div class="mt-4 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-        <ul v-if="plan.warnings.length > 0" class="space-y-1 text-sm text-amber-300">
+      <p
+        v-if="plan.warnings.length + plan.dependents.length + plan.orphans.length + plan.brokenUnmanaged.length === 0"
+        class="mt-2 text-muted"
+      >
+        No other installed mod depends on it.
+      </p>
+      <div v-else class="mt-4 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <ul v-if="plan.warnings.length > 0" class="space-y-1 rounded-md border border-warn/40 px-3 py-2 text-sm text-warn">
           <li v-for="warning in plan.warnings" :key="warning">{{ warning }}</li>
         </ul>
 
         <section v-if="plan.dependents.length > 0">
-          <h3 class="text-sm font-medium text-slate-200">This will also remove:</h3>
-          <ul class="mt-2 space-y-1 text-sm text-slate-300">
-            <li v-for="dependent in plan.dependents" :key="dependent.identifier">
+          <h3 class="text-sm font-medium">This will also remove:</h3>
+          <ul class="mt-2 divide-y divide-line rounded-md border border-line text-sm">
+            <li v-for="dependent in plan.dependents" :key="dependent.identifier" class="flex justify-between gap-3 px-3 py-2">
               {{ dependent.name }}
-              <span v-if="dependent.version" class="font-mono text-slate-400">{{ dependent.version }}</span>
+              <span v-if="dependent.version" class="readout text-muted">{{ dependent.version }}</span>
             </li>
           </ul>
         </section>
 
         <fieldset v-if="plan.orphans.length > 0">
-          <legend class="text-sm font-medium text-slate-200">No longer needed:</legend>
+          <legend class="text-sm font-medium">No longer needed:</legend>
           <div class="mt-2 space-y-1">
-            <div v-for="orphan in plan.orphans" :key="orphan.identifier" class="flex items-center gap-2">
+            <div v-for="orphan in plan.orphans" :key="orphan.identifier" class="flex items-center gap-3 rounded-sm px-1 py-1.5 hover:bg-raised">
               <input
                 :id="orphanInputId(orphan.identifier)"
                 v-model="selectedOrphans"
                 type="checkbox"
-                class="accent-cyan-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
+                class="h-4 w-4 accent-accent"
                 :value="orphan.identifier"
               />
-              <label :for="orphanInputId(orphan.identifier)" class="text-sm text-slate-300">
+              <label :for="orphanInputId(orphan.identifier)" class="text-sm">
                 {{ orphan.name }}
-                <span v-if="orphan.version" class="font-mono text-slate-400">{{ orphan.version }}</span>
+                <span v-if="orphan.version" class="readout text-muted">{{ orphan.version }}</span>
               </label>
             </div>
           </div>
         </fieldset>
 
         <section v-if="plan.brokenUnmanaged.length > 0">
-          <h3 class="text-sm font-medium text-amber-300">These manually installed mods will stop working:</h3>
-          <ul class="mt-2 space-y-1 text-sm text-slate-300">
+          <h3 class="text-sm font-medium text-warn">These manually installed mods will stop working:</h3>
+          <ul class="mt-2 space-y-1 text-sm">
             <li v-for="broken in plan.brokenUnmanaged" :key="broken.identifier">{{ broken.name }}</li>
           </ul>
         </section>
       </div>
 
-      <p v-if="error !== undefined" role="alert" class="mt-4 rounded-md border border-rose-400/60 p-3 text-sm text-rose-300">
+      <p v-if="error !== undefined" role="alert" class="mt-4 rounded-md border border-danger/50 p-3 text-sm text-danger">
         {{ error }}
       </p>
 
       <div class="mt-6 flex flex-wrap gap-3">
         <button
-          class="rounded-md bg-rose-400 px-4 py-2 font-semibold text-slate-950 hover:bg-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+          class="btn btn-destructive"
           type="button"
           :disabled="busy"
           @click="confirm"
@@ -154,7 +160,7 @@ function orphanInputId(identifier: string): string {
           {{ busy ? "Uninstalling…" : "Uninstall" }}
         </button>
         <button
-          class="rounded-md border border-slate-600 px-4 py-2 font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          class="btn btn-secondary"
           ref="cancelButtonRef"
           type="button"
           :disabled="busy"

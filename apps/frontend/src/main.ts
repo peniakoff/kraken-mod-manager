@@ -1,3 +1,5 @@
+import "@fontsource-variable/host-grotesk";
+import "@fontsource-variable/jetbrains-mono";
 import { createApp } from "vue";
 import App from "./App.vue";
 import "./styles.css";

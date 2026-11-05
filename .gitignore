@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Local agent and browser-test artifacts
 .artifacts/
+
+# Playwright MCP screenshots and snapshots
+.playwright-mcp/

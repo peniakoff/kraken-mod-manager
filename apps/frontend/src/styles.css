@@ -1,14 +1,388 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: dark;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+/*
+ * One visual system for the whole app: a dark cockpit ground, hairline
+ * panels, readouts in a monospace face and a single cyan accent. Tailwind's
+ * default palette is removed so every colour has to come from these tokens.
+ */
+@theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --color-void: #04070c;
+  --color-hull: #070c13;
+  --color-panel: #0b121b;
+  --color-raised: #121b27;
+  --color-line: rgb(148 184 214 / 0.13);
+  --color-line-strong: rgb(148 184 214 / 0.26);
+
+  --color-ink: #e7eef5;
+  --color-muted: #94a6b8;
+
+  --color-accent: #5ad1ff;
+  --color-accent-strong: #93e2ff;
+  --color-accent-ink: #03131c;
+  --color-ok: #5fe3a1;
+  --color-warn: #f6b94c;
+  --color-danger: #ff7b7b;
+  --color-danger-ink: #1f0707;
+
+  --font-sans: "Host Grotesk Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 }
 
-body {
-  margin: 0;
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-void);
+    color: var(--color-ink);
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
 }
 
-button {
-  cursor: pointer;
+@layer components {
+  /* The cockpit ground: near-black with a cool pool of light and a faint instrument grid. */
+  .cockpit-ground {
+    background-color: var(--color-void);
+    background-image:
+      radial-gradient(ellipse 70% 50% at 85% -10%, rgb(90 209 255 / 0.09), transparent 70%),
+      linear-gradient(rgb(148 184 214 / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(148 184 214 / 0.035) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+    background-attachment: fixed;
+  }
+
+  .panel {
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    background-color: rgb(11 18 27 / 0.88);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  }
+
+  /* A readout tile: a short lit tick on its top edge, like a gauge bezel. */
+  .panel-instrument {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel-instrument::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto auto 16px;
+    width: 32px;
+    height: 2px;
+    border-radius: 0 0 2px 2px;
+    background-color: var(--color-accent);
+    opacity: 0.7;
+  }
+
+  .panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .panel-title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-muted);
+  }
+
+  .readout {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      transform 120ms ease;
+  }
+
+  .btn:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+
+  .btn:not(:disabled):active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+  }
+
+  .btn-sm {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  .btn-primary {
+    background-color: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  .btn-primary:not(:disabled):hover {
+    background-color: var(--color-accent-strong);
+  }
+
+  .btn-secondary {
+    border-color: var(--color-line-strong);
+    background-color: rgb(18 27 39 / 0.6);
+    color: var(--color-ink);
+  }
+
+  .btn-secondary:not(:disabled):hover {
+    border-color: rgb(90 209 255 / 0.5);
+    background-color: var(--color-raised);
+  }
+
+  .btn-danger {
+    border-color: rgb(255 123 123 / 0.45);
+    color: var(--color-danger);
+  }
+
+  .btn-danger:not(:disabled):hover {
+    border-color: var(--color-danger);
+    background-color: rgb(255 123 123 / 0.1);
+  }
+
+  /* A destructive action repeated in every row: quiet until pointed at. */
+  .btn-danger-quiet {
+    color: var(--color-muted);
+  }
+
+  .btn-danger-quiet:not(:disabled):hover {
+    border-color: rgb(255 123 123 / 0.45);
+    background-color: rgb(255 123 123 / 0.1);
+    color: var(--color-danger);
+  }
+
+  /* Only for the confirm step of a destructive dialog: the one filled danger action. */
+  .btn-destructive {
+    background-color: var(--color-danger);
+    color: var(--color-danger-ink);
+  }
+
+  .btn-destructive:not(:disabled):hover {
+    background-color: #ff9c9c;
+  }
+
+  .btn-icon {
+    width: 36px;
+    padding: 0;
+    color: var(--color-muted);
+  }
+
+  .btn-icon:not(:disabled):hover {
+    background-color: var(--color-raised);
+    color: var(--color-ink);
+  }
+
+  .field {
+    display: block;
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-size: 14px;
+    transition: border-color 150ms ease;
+  }
+
+  .field::placeholder {
+    color: var(--color-muted);
+  }
+
+  .field:hover {
+    border-color: rgb(148 184 214 / 0.4);
+  }
+
+  .field:focus-visible {
+    border-color: var(--color-accent);
+    outline-offset: 0;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .badge-ok {
+    border-color: rgb(95 227 161 / 0.35);
+    color: var(--color-ok);
+  }
+
+  .badge-warn {
+    border-color: rgb(246 185 76 / 0.4);
+    color: var(--color-warn);
+  }
+
+  .badge-info {
+    border-color: rgb(90 209 255 / 0.4);
+    color: var(--color-accent);
+  }
+
+  .badge-danger {
+    border-color: rgb(255 123 123 / 0.4);
+    color: var(--color-danger);
+  }
+
+  /* Indicator light, as on an instrument panel. */
+  .status-light {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 9999px;
+    background-color: currentColor;
+    box-shadow: 0 0 8px currentColor;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    color: var(--color-muted);
+    font-size: 13px;
+    font-weight: 500;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease;
+  }
+
+  .chip:not(:disabled):hover {
+    border-color: rgb(148 184 214 / 0.45);
+    color: var(--color-ink);
+  }
+
+  .chip[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    background-color: rgb(90 209 255 / 0.12);
+    color: var(--color-accent);
+  }
+
+  .chip:disabled {
+    opacity: 0.45;
+  }
+
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background-color: rgb(2 4 8 / 0.72);
+    backdrop-filter: blur(2px);
+  }
+
+  .dialog {
+    width: 100%;
+    max-width: 30rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-panel);
+    padding: 24px;
+    box-shadow: 0 24px 64px rgb(0 0 0 / 0.55);
+  }
+
+  .data-row {
+    border-top: 1px solid var(--color-line);
+    transition: background-color 150ms ease;
+  }
+
+  .data-row:first-child {
+    border-top: 0;
+  }
+
+  .data-row:hover {
+    background-color: rgb(18 27 39 / 0.55);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+
+  .btn:not(:disabled):hover,
+  .btn:not(:disabled):active {
+    transform: none;
+  }
 }

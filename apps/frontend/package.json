@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource-variable/host-grotesk": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@kraken/contracts": "workspace:*",
     "vue": "^3.5.40"
   },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { AvailableUpdate, CkanModule, InstalledMod } from "@kraken/contracts";
+import AppIcon from "./AppIcon.vue";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
 
 const props = defineProps<{
@@ -24,89 +25,78 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
   if (props.kspVersion === undefined) {
     return { text: "Unknown KSP version", ok: true };
   }
-  if (props.compatibleOnly) {
-    return { text: `✓ ${props.kspVersion}`, ok: true };
+  if (props.compatibleOnly || isCompatibleWithKsp(mod, props.kspVersion)) {
+    return { text: props.kspVersion, ok: true };
   }
-  const ok = isCompatibleWithKsp(mod, props.kspVersion);
-  return ok ? { text: `✓ ${props.kspVersion}`, ok: true } : { text: "May not be compatible", ok: false };
+  return { text: "May not be compatible", ok: false };
 }
 </script>
 
 <template>
-  <div>
-    <ul v-if="mods.length > 0" class="mt-3 max-h-96 space-y-3 overflow-y-auto">
-      <li
-        v-for="mod in mods"
-        :key="`${mod.identifier}@${mod.version}`"
-        class="rounded-lg border border-slate-700 p-3"
-        data-testid="mod-row"
-      >
-        <p class="font-semibold">
-          {{ mod.name }} <span class="font-mono text-sm text-slate-400">{{ mod.version }}</span>
+  <ul v-if="mods.length > 0">
+    <li
+      v-for="mod in mods"
+      :key="`${mod.identifier}@${mod.version}`"
+      class="data-row grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-6"
+      data-testid="mod-row"
+    >
+      <div class="min-w-0">
+        <p class="flex flex-wrap items-baseline gap-x-2">
+          <span class="text-[15px] font-medium">{{ mod.name }}</span>
+          <span class="readout text-[13px] text-muted">{{ mod.version }}</span>
         </p>
-        <p class="mt-1 text-sm text-slate-400">
+        <p class="mt-0.5 truncate text-[13px] text-muted">
           {{ mod.identifier }} · {{ mod.authors.join(", ") || "Unknown author" }}
         </p>
-        <p v-if="mod.abstract" class="mt-2 line-clamp-2 text-sm text-slate-300">{{ mod.abstract }}</p>
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span
-            :class="[
-              'rounded-full border px-2 py-0.5 font-medium',
-              compatLabel(mod).ok
-                ? 'border-emerald-500/60 text-emerald-300'
-                : 'border-amber-500/60 text-amber-300',
-            ]"
-            data-testid="compat-flag"
-          >
+        <p v-if="mod.abstract" class="mt-1.5 line-clamp-2 text-sm leading-relaxed">{{ mod.abstract }}</p>
+        <div class="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <span :class="['badge', compatLabel(mod).ok ? '' : 'badge-warn']" data-testid="compat-flag">
+            <AppIcon
+              :name="compatLabel(mod).ok ? 'check' : 'alert'"
+              :size="14"
+              :class="compatLabel(mod).ok ? 'text-ok' : ''"
+            />
             {{ compatLabel(mod).text }}
           </span>
-          <span
-            v-for="tag in mod.tags.slice(0, 4)"
-            :key="tag"
-            class="rounded-full border border-slate-600 px-2 py-0.5 text-slate-300"
-          >
-            {{ tag }}
-          </span>
-          <span v-if="formatDownloadSize(mod.downloadSize) !== undefined" class="text-slate-400">
+          <span v-for="tag in mod.tags.slice(0, 4)" :key="tag" class="badge">{{ tag }}</span>
+          <span v-if="formatDownloadSize(mod.downloadSize) !== undefined" class="readout px-1 text-[13px] text-muted">
             {{ formatDownloadSize(mod.downloadSize) }}
           </span>
           <span
             v-if="installedById.get(mod.identifier) !== undefined"
-            class="rounded-full border border-sky-500/60 px-2 py-0.5 font-medium text-sky-300"
+            class="badge badge-ok"
             data-testid="installed-badge"
           >
             Installed{{ installedById.get(mod.identifier)?.version ? ` ${installedById.get(mod.identifier)?.version}` : "" }}
           </span>
-          <span
-            v-if="updatesById.get(mod.identifier) !== undefined"
-            class="rounded-full border border-violet-500/60 px-2 py-0.5 font-medium text-violet-300"
-            data-testid="update-badge"
-          >
+          <span v-if="updatesById.get(mod.identifier) !== undefined" class="badge badge-info" data-testid="update-badge">
+            <AppIcon name="update" :size="14" />
             Update: {{ updatesById.get(mod.identifier)?.availableVersion }}
           </span>
         </div>
-        <div class="mt-3 flex items-center gap-2">
-          <button
-            v-if="mod.download !== undefined"
-            class="rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
-            type="button"
-            :disabled="installingIdentifiers.includes(mod.identifier)"
-            @click="emit('install', mod)"
-          >
-            {{ installingIdentifiers.includes(mod.identifier) ? "Installing…" : "Install" }}
-          </button>
-          <button
-            class="rounded-md border border-slate-600 px-3 py-1 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-slate-100"
-            type="button"
-            :aria-label="`View details for ${mod.name}`"
-            data-testid="mod-details-btn"
-            @click="emit('select', mod)"
-          >
-            Details
-          </button>
-        </div>
-      </li>
-    </ul>
-    <p v-else class="mt-3 text-sm text-slate-400">No mods match the current search and filters.</p>
-  </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          class="btn btn-secondary btn-sm"
+          type="button"
+          :aria-label="`View details for ${mod.name}`"
+          data-testid="mod-details-btn"
+          @click="emit('select', mod)"
+        >
+          Details
+        </button>
+        <button
+          v-if="mod.download !== undefined"
+          class="btn btn-primary btn-sm"
+          type="button"
+          :disabled="installingIdentifiers.includes(mod.identifier)"
+          @click="emit('install', mod)"
+        >
+          <AppIcon name="download" />
+          {{ installingIdentifiers.includes(mod.identifier) ? "Installing…" : "Install" }}
+        </button>
+      </div>
+    </li>
+  </ul>
+  <p v-else class="px-5 py-10 text-center text-muted">No mods match the current search and filters.</p>
 </template>

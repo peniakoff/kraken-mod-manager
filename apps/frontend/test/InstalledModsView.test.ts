@@ -1,0 +1,73 @@
+import { mount } from "@vue/test-utils";
+import { describe, expect, it } from "vitest";
+import InstalledModsView from "../src/components/InstalledModsView.vue";
+
+const props = {
+  installedMods: [
+    { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" },
+    { identifier: "MechJeb2", name: "MechJeb 2", version: "2.15.4.0", status: "managed" },
+    { identifier: "Firespitter", name: "Firespitter", status: "detected" },
+  ],
+  availableUpdates: [
+    { identifier: "MechJeb2", name: "MechJeb 2", installedVersion: "2.15.4.0", availableVersion: "2.15.5.0" },
+  ],
+  installingIdentifiers: [],
+  uninstallingIdentifier: undefined,
+} as const;
+
+function rows(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('[data-testid="installed-row"]');
+}
+
+describe("InstalledModsView", () => {
+  it("lists every installed mod with its version and status", () => {
+    const wrapper = mount(InstalledModsView, { props });
+
+    expect(rows(wrapper)).toHaveLength(3);
+    expect(rows(wrapper)[0]!.text()).toContain("Module Manager");
+    expect(rows(wrapper)[0]!.text()).toContain("4.2.3");
+    expect(rows(wrapper)[0]!.text()).toContain("Managed");
+    expect(rows(wrapper)[2]!.text()).toContain("Detected");
+  });
+
+  it("filters by name or identifier, ignoring case", async () => {
+    const wrapper = mount(InstalledModsView, { props });
+
+    await wrapper.find('input[type="search"]').setValue("mechjeb");
+    expect(rows(wrapper)).toHaveLength(1);
+    expect(rows(wrapper)[0]!.text()).toContain("MechJeb 2");
+
+    await wrapper.find('input[type="search"]').setValue("modulemanager");
+    expect(rows(wrapper)).toHaveLength(1);
+
+    await wrapper.find('input[type="search"]').setValue("nothing-like-this");
+    expect(rows(wrapper)).toHaveLength(0);
+    expect(wrapper.text()).toContain("No installed mods match");
+  });
+
+  it("offers uninstall only for managed mods", async () => {
+    const wrapper = mount(InstalledModsView, { props });
+
+    expect(rows(wrapper)[2]!.find('[data-testid="installed-uninstall-btn"]').exists()).toBe(false);
+    await rows(wrapper)[0]!.find('[data-testid="installed-uninstall-btn"]').trigger("click");
+
+    expect(wrapper.emitted("uninstall")).toEqual([[props.installedMods[0]]]);
+  });
+
+  it("offers an update where one is available", async () => {
+    const wrapper = mount(InstalledModsView, { props });
+
+    expect(rows(wrapper)[0]!.find('[data-testid="installed-update-btn"]').exists()).toBe(false);
+    const update = rows(wrapper)[1]!.find('[data-testid="installed-update-btn"]');
+    expect(update.attributes("aria-label")).toBe("Update MechJeb 2 to 2.15.5.0");
+    await update.trigger("click");
+
+    expect(wrapper.emitted("update")).toEqual([[props.availableUpdates[0]]]);
+  });
+
+  it("shows an empty state when nothing is installed", () => {
+    const wrapper = mount(InstalledModsView, { props: { ...props, installedMods: [] } });
+
+    expect(wrapper.text()).toContain("No managed or detected mods yet.");
+  });
+});

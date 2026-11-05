@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **New interface:** one visual system styled as a spacecraft cockpit, with a dark instrument-panel ground, readouts in a monospace face and one accent colour. Self-hosted Host Grotesk and JetBrains Mono fonts replace the system fallback.
+- Navigation moves to a sidebar with Overview, Installed and Browse mods. Installed mods get their own filterable table with Update and Uninstall in each row, so Browse mods now opens on the search.
+- The overview shows the KSP version, installed mods, available updates and the registry as readouts, with relative "updated" times and grouped numbers.
+- New vector brand mark, favicon, PWA and Apple touch icons, and README artwork.
+
+### Fixed
+- The mod details panel no longer shows a doubled prefix such as "vv112.0.1" for versions that already start with "v".
+
 ## [0.4.0] - 2026-11-05
 
 ### Added

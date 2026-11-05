@@ -1,12 +1,17 @@
 {
   "name": "Kraken Mod Manager",
-  "short_name": "KMM",
+  "short_name": "Kraken",
   "description": "A lightweight, cross-platform mod manager for Kerbal Space Program.",
   "start_url": "/",
   "display": "browser",
-  "background_color": "#09111E",
-  "theme_color": "#09111E",
+  "background_color": "#04070C",
+  "theme_color": "#04070C",
   "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
@@ -16,6 +21,12 @@
       "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

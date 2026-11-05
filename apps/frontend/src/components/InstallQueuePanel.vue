@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { JobResponse } from "@kraken/contracts";
+import AppIcon from "./AppIcon.vue";
 
 const props = defineProps<{
   jobs: JobResponse[];
@@ -59,19 +60,14 @@ function statusLabel(job: JobResponse): string {
 <template>
   <aside
     v-if="jobs.length > 0"
-    class="fixed inset-x-0 bottom-0 z-30 border-t border-slate-700 bg-slate-950/95 shadow-2xl backdrop-blur"
+    class="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-hull/95 backdrop-blur md:left-60"
     aria-label="Install queue"
     data-testid="install-queue"
   >
-    <div class="mx-auto max-w-5xl px-6 py-4">
+    <div class="mx-auto max-w-6xl px-4 py-4 md:px-10">
       <div class="flex items-center justify-between gap-4">
-        <h2 class="font-semibold">Install queue <span class="text-sm text-slate-400">({{ jobs.length }})</span></h2>
-        <button
-          v-if="hasFinished"
-          type="button"
-          class="rounded-md border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-          @click="emit('clearFinished')"
-        >
+        <h2 class="panel-title">Install queue <span class="readout text-[13px] text-muted">{{ jobs.length }}</span></h2>
+        <button v-if="hasFinished" type="button" class="btn btn-secondary btn-sm" @click="emit('clearFinished')">
           Clear finished
         </button>
       </div>
@@ -79,52 +75,53 @@ function statusLabel(job: JobResponse): string {
         <li
           v-for="job in jobs"
           :key="job.jobId"
-          class="rounded-lg border px-3 py-2"
+          class="rounded-md border bg-panel px-4 py-3"
           :class="{
-            'border-slate-700 bg-slate-900': !isTerminal(job),
-            'border-emerald-700 bg-emerald-950/40': job.status === 'succeeded',
-            'border-rose-700 bg-rose-950/40': job.status === 'failed',
+            'border-line': !isTerminal(job),
+            'border-ok/40': job.status === 'succeeded',
+            'border-danger/50': job.status === 'failed',
           }"
           :data-job-id="job.jobId"
         >
           <div class="flex items-start gap-3">
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <p class="font-semibold">
+                <p class="font-medium">
                   {{ job.identifier }}
-                  <span v-if="job.version" class="font-mono text-xs text-slate-400">{{ job.version }}</span>
+                  <span v-if="job.version" class="readout text-[13px] text-muted">{{ job.version }}</span>
                 </p>
-                <p class="text-xs font-semibold uppercase tracking-wide" :class="job.status === 'failed' ? 'text-rose-300' : job.status === 'succeeded' ? 'text-emerald-300' : 'text-cyan-300'">
+                <p
+                  class="flex items-center gap-2 text-[13px] font-medium"
+                  :class="job.status === 'failed' ? 'text-danger' : job.status === 'succeeded' ? 'text-ok' : 'text-accent'"
+                >
+                  <span class="status-light" aria-hidden="true" />
                   {{ statusLabel(job) }}
                 </p>
               </div>
-              <p class="mt-1 text-sm" :class="job.status === 'failed' ? 'text-rose-200' : 'text-slate-300'">
+              <p class="mt-1 text-sm" :class="job.status === 'failed' ? 'text-danger' : 'text-muted'">
                 {{ job.error ?? job.message ?? statusLabel(job) }}
               </p>
               <div v-if="!isTerminal(job)" class="mt-2 flex items-center gap-3">
                 <progress
-                  class="h-2 min-w-0 flex-1 accent-cyan-400"
+                  class="h-1.5 min-w-0 flex-1 accent-accent"
                   :value="percentage(job)"
                   :max="percentage(job) === undefined ? undefined : 100"
                   :aria-label="`Install progress for ${job.identifier}`"
                 />
-                <span v-if="percentage(job) !== undefined" class="text-xs tabular-nums text-slate-300">
-                  {{ percentage(job) }}%
-                </span>
-                <span v-else-if="progressText(job) !== undefined" class="text-xs tabular-nums text-slate-400">
+                <span v-if="percentage(job) !== undefined" class="readout text-[13px]">{{ percentage(job) }}%</span>
+                <span v-else-if="progressText(job) !== undefined" class="readout text-[13px] text-muted">
                   {{ progressText(job) }}
                 </span>
               </div>
-              <p class="mt-1 font-mono text-[11px] text-slate-500">Job {{ job.jobId }}</p>
             </div>
             <button
               v-if="isTerminal(job)"
               type="button"
-              class="rounded px-2 py-1 text-sm text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+              class="btn btn-icon btn-sm w-8"
               :aria-label="`Dismiss ${job.identifier} install`"
               @click="emit('dismiss', job.jobId)"
             >
-              Dismiss
+              <AppIcon name="close" />
             </button>
           </div>
         </li>
