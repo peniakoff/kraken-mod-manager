@@ -5,3 +5,7 @@ packages:
 allowBuilds:
   esbuild: true
 
+
+# Skip releases younger than 7 days (in minutes), for transitive dependencies
+# too. A hijacked release is usually caught and pulled within days.
+minimumReleaseAge: 10080
