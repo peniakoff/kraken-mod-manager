@@ -154,16 +154,19 @@
       transform 120ms ease;
   }
 
-  .btn:not(:disabled):hover {
+  .btn:not(:disabled, [aria-disabled="true"]):hover {
     transform: translateY(-1px);
   }
 
-  .btn:not(:disabled):active {
+  .btn:not(:disabled, [aria-disabled="true"]):active {
     transform: translateY(0) scale(0.98);
   }
 
-  .btn:disabled {
+  /* aria-disabled keeps a busy button focusable, so a dialog it opened can hand focus back. */
+  .btn:disabled,
+  .btn[aria-disabled="true"] {
     opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .btn-sm {
@@ -177,7 +180,7 @@
     color: var(--color-accent-ink);
   }
 
-  .btn-primary:not(:disabled):hover {
+  .btn-primary:not(:disabled, [aria-disabled="true"]):hover {
     background-color: var(--color-accent-strong);
   }
 
@@ -381,8 +384,8 @@
     animation-duration: 0.01ms !important;
   }
 
-  .btn:not(:disabled):hover,
-  .btn:not(:disabled):active {
+  .btn:hover,
+  .btn:active {
     transform: none;
   }
 }

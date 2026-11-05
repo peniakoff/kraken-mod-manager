@@ -89,8 +89,8 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
           v-if="mod.download !== undefined"
           class="btn btn-primary btn-sm"
           type="button"
-          :disabled="installingIdentifiers.includes(mod.identifier)"
-          @click="emit('install', mod)"
+          :aria-disabled="installingIdentifiers.includes(mod.identifier) ? 'true' : undefined"
+          @click="!installingIdentifiers.includes(mod.identifier) && emit('install', mod)"
         >
           <AppIcon name="download" />
           {{ installingIdentifiers.includes(mod.identifier) ? "Installing…" : "Install" }}

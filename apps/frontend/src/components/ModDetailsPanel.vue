@@ -262,9 +262,9 @@ onUnmounted(() => {
               v-if="currentVersionMod.download !== undefined"
               class="btn btn-primary btn-sm"
               type="button"
-              :disabled="isInstalling || isUninstalling"
+              :aria-disabled="isInstalling || isUninstalling ? 'true' : undefined"
               data-testid="details-install-btn"
-              @click="emit('install', currentVersionMod)"
+              @click="!isInstalling && !isUninstalling && emit('install', currentVersionMod)"
             >
               {{ isInstalling ? "Installing…" : isInstalled ? "Reinstall" : "Install" }}
             </button>

@@ -194,3 +194,86 @@ describe("BrowseModsView provider choices", () => {
     expect(wrapper.findAll("fieldset")).toHaveLength(0);
   });
 });
+
+describe("BrowseModsView install button while an install is pending", () => {
+  it("stays focusable but inert, so focus can return to it after a dialog", async () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, installingIdentifiers: ["ModuleManager"] } });
+    const install = wrapper.findAll("button").find((button) => button.text() === "Installing…")!;
+
+    expect(install.attributes("disabled")).toBeUndefined();
+    expect(install.attributes("aria-disabled")).toBe("true");
+    await install.trigger("click");
+    expect(wrapper.emitted("install")).toBeUndefined();
+  });
+});
+
+describe("BrowseModsView dependency dialog keyboard", () => {
+  function tab(shiftKey = false) {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true }));
+  }
+
+  it("moves focus into the dialog, traps Tab and restores focus on close", async () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const wrapper = mount(BrowseModsView, {
+      props: { ...baseProps, dependencyPrompt: choicePrompt() },
+      attachTo: document.body,
+    });
+    await wrapper.vm.$nextTick();
+
+    const dialog = wrapper.find('[role="dialog"]').element;
+    const firstRadio = wrapper.find('input[value="RSSTextures4096"]').element;
+    const cancel = wrapper.findAll("button").find((button) => button.text() === "Cancel")!.element;
+    expect(document.activeElement).toBe(firstRadio);
+
+    cancel.focus();
+    tab();
+    expect(document.activeElement).toBe(firstRadio);
+    tab(true);
+    expect(document.activeElement).toBe(cancel);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await wrapper.setProps({ dependencyPrompt: undefined });
+    expect(document.activeElement).toBe(opener);
+
+    wrapper.unmount();
+    opener.remove();
+  });
+
+  it("pulls focus back when the browser moves it out, as Tab does past a radio group", async () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    const wrapper = mount(BrowseModsView, {
+      props: { ...baseProps, dependencyPrompt: choicePrompt() },
+      attachTo: document.body,
+    });
+    const dialog = wrapper.find('[role="dialog"]').element;
+
+    outside.focus();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    wrapper.unmount();
+    outside.remove();
+  });
+
+  it("cancels on Escape without closing the details panel underneath", async () => {
+    const underneath: string[] = [];
+    const listener = (event: KeyboardEvent) => underneath.push(event.key);
+    window.addEventListener("keydown", listener);
+    const wrapper = mount(BrowseModsView, {
+      props: { ...baseProps, selectedMod: rssMod, dependencyPrompt: choicePrompt() },
+      attachTo: document.body,
+    });
+    await wrapper.vm.$nextTick();
+
+    document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(wrapper.emitted("cancelDependencyInstall")).toEqual([[]]);
+    expect(wrapper.emitted("selectMod")).toBeUndefined();
+    expect(underneath).toEqual([]);
+
+    wrapper.unmount();
+    window.removeEventListener("keydown", listener);
+  });
+});
