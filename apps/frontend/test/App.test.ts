@@ -875,3 +875,117 @@ describe("App install recovery notice", () => {
     expect(wrapper.find('[data-testid="recovery-notice"]').exists()).toBe(false);
   });
 });
+
+describe("App optional mods at install", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+  const mod = {
+    identifier: "Scansat",
+    name: "SCANsat",
+    authors: ["DMagic"],
+    version: "20.4",
+    tags: ["plugin"],
+    download: "https://example.test/scansat.zip",
+  };
+  const target = { identifier: mod.identifier, name: mod.name, version: mod.version };
+  const moduleManager = { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" };
+  const basePlan = { status: "ok", target, alreadySatisfied: [], conflicts: [], unmet: [], choices: [] };
+
+  function optionalFetch(installed: boolean) {
+    const planBodies: unknown[] = [];
+    const installBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 3 });
+      if (url === "/api/v1/installed-mods") {
+        return json({ mods: installed ? [{ ...target, version: "20.3", status: "managed" }] : [] });
+      }
+      if (url === "/api/v1/updates") return json({ updates: [] });
+      if (url === "/api/v1/mods/Scansat/plan") {
+        const body = JSON.parse(String(init?.body)) as { optional?: string[] };
+        planBodies.push(body);
+        const picked = body.optional ?? [];
+        return json({
+          ...basePlan,
+          toInstall: picked.includes("ModuleManager") ? [moduleManager, target] : [target],
+          optional: picked.includes("ModuleManager")
+            ? []
+            : [{ kind: "recommends", name: "ModuleManager", requiredBy: "Scansat", module: moduleManager }],
+        });
+      }
+      if (url === "/api/v1/mods/Scansat/install" && init?.method === "POST") {
+        installBodies.push(JSON.parse(String(init.body)));
+        return json(
+          { job: { jobId: "job-scansat", kind: "install", identifier: mod.identifier, version: mod.version, status: "queued", phase: "queued" } },
+          202,
+        );
+      }
+      if (url.startsWith("/api/v1/mods")) return json({ total: 1, mods: [mod] });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    return { fetchMock, planBodies, installBodies };
+  }
+
+  async function clickInstall(wrapper: ReturnType<typeof mount>) {
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+    await wrapper.findAll("button").find((button) => button.text() === "Browse mods")!.trigger("click");
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="mod-row"]').exists()).toBe(true));
+    await wrapper.get('[data-testid="mod-row"]').findAll("button").find((button) => button.text().endsWith("Install") || button.text() === "Reinstall")!.trigger("click");
+  }
+
+  it("offers recommendations for a new mod and installs the picked ones with it", async () => {
+    const { fetchMock, planBodies, installBodies } = optionalFetch(false);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+    const wrapper = mount(App);
+
+    await clickInstall(wrapper);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Install SCANsat?"));
+    expect(wrapper.get<HTMLInputElement>('input[value="ModuleManager"]').element.checked).toBe(true);
+    await wrapper.get('[role="dialog"]').findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(installBodies).toHaveLength(1));
+    expect(planBodies).toEqual([{ version: "20.4" }, { version: "20.4", optional: ["ModuleManager"] }]);
+    expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: true, optional: ["ModuleManager"] });
+  });
+
+  it("installs directly when every optional mod is unpicked", async () => {
+    const { fetchMock, installBodies } = optionalFetch(false);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+    const wrapper = mount(App);
+
+    await clickInstall(wrapper);
+    await vi.waitFor(() => expect(wrapper.find('input[value="ModuleManager"]').exists()).toBe(true));
+    await wrapper.get('input[value="ModuleManager"]').setValue(false);
+    await wrapper.get('[role="dialog"]').findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(installBodies).toHaveLength(1));
+    expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: false });
+  });
+
+  it("does not offer optional mods again for a mod that is already installed", async () => {
+    const { fetchMock, installBodies } = optionalFetch(true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+    const wrapper = mount(App);
+
+    await clickInstall(wrapper);
+
+    await vi.waitFor(() => expect(installBodies).toHaveLength(1));
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: false });
+  });
+});
+

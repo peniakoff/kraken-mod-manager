@@ -33,6 +33,7 @@ import {
 } from "./api.js";
 import AppShell, { type AppView } from "./components/AppShell.vue";
 import BrowseModsView from "./components/BrowseModsView.vue";
+import type { DependencyPrompt } from "./components/DependencyPromptDialog.vue";
 import DashboardView from "./components/DashboardView.vue";
 import InstalledModsView from "./components/InstalledModsView.vue";
 import RecoveryNotice from "./components/RecoveryNotice.vue";
@@ -75,7 +76,7 @@ const pendingInstallIdentifiers = ref<string[]>([]);
 const isUpdatingAll = ref(false);
 const uninstallingIdentifier = ref<string>();
 const uninstallPrompt = ref<{ mod: InstalledMod; plan: UninstallPlanResponse; error?: string }>();
-const dependencyPrompt = ref<{ mod: CkanModule; plan: InstallPlanResponse; choices: Record<string, string> }>();
+const dependencyPrompt = ref<DependencyPrompt>();
 const selectedMod = ref<CkanModule>();
 const selectedModVersions = ref<CkanModule[]>([]);
 const isLoadingVersions = ref(false);
@@ -339,17 +340,26 @@ async function onInstall(mod: CkanModule): Promise<void> {
   await planAndApply(mod, {});
 }
 
-async function planAndApply(mod: CkanModule, choices: Record<string, string>): Promise<void> {
+/** Optional mods offered for one install, carried across re-plans. */
+type OptionalState = Pick<DependencyPrompt, "offered" | "selected" | "confirmed">;
+
+async function planAndApply(mod: CkanModule, choices: Record<string, string>, optional: OptionalState = {}): Promise<void> {
   try {
-    const plan = await planModInstall(mod.identifier, mod.version, choices);
-    await applyPlan(mod, plan, choices);
+    const picked = optional.confirmed === true ? optional.selected : undefined;
+    const plan = await planModInstall(mod.identifier, mod.version, choices, picked);
+    await applyPlan(mod, plan, choices, optional);
   } catch (error) {
     reportError(error, "Install could not be planned.");
     setInstallPending(mod.identifier, false);
   }
 }
 
-async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Record<string, string>): Promise<void> {
+async function applyPlan(
+  mod: CkanModule,
+  plan: InstallPlanResponse,
+  choices: Record<string, string>,
+  optional: OptionalState,
+): Promise<void> {
   if (plan.status === "blocked") {
     const details = [
       ...plan.conflicts.map((entry) => entry.message),
@@ -360,17 +370,28 @@ async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Re
     return;
   }
 
+  // The first plan decides what is offered; later plans include the picked
+  // mods and no longer list them. An installed mod was offered them already.
+  const isInstalled = installedMods.value.some((entry) => entry.identifier === mod.identifier);
+  const offered =
+    optional.offered ?? (isInstalled ? [] : plan.optional.filter((entry) => entry.module !== undefined));
+  const selected =
+    optional.selected ??
+    offered.flatMap((entry) => (entry.kind === "recommends" && entry.module !== undefined ? [entry.module.identifier] : []));
+  const confirmed = optional.confirmed === true;
+
   const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
-  if (plan.status === "choice-required" || missing.length > 0) {
+  if (plan.status === "choice-required" || (!confirmed && (missing.length > 0 || offered.length > 0))) {
     setInstallPending(mod.identifier, false);
-    dependencyPrompt.value = { mod, plan, choices };
+    dependencyPrompt.value = { mod, plan, choices, offered, selected, confirmed };
     // The dependency dialog lives in the browse view; an update started from
     // the overview or the installed list has to switch there to be seen.
     activeView.value = "browse";
     return;
   }
 
-  await startInstallJob(mod, false);
+  const picked = confirmed ? selected : [];
+  await startInstallJob(mod, missing.length > 0 || picked.length > 0, choices, picked);
 }
 
 async function continueWithChoices(choices: Record<string, string>): Promise<void> {
@@ -381,16 +402,29 @@ async function continueWithChoices(choices: Record<string, string>): Promise<voi
   dependencyPrompt.value = undefined;
   setInstallPending(prompt.mod.identifier, true);
   errorMessage.value = undefined;
-  await planAndApply(prompt.mod, choices);
+  await planAndApply(prompt.mod, choices, prompt);
 }
 
-async function confirmDependencyInstall(): Promise<void> {
+async function confirmDependencyInstall(picked: string[]): Promise<void> {
   const prompt = dependencyPrompt.value;
   if (prompt === undefined) {
     return;
   }
   dependencyPrompt.value = undefined;
-  await startInstallJob(prompt.mod, true, prompt.choices);
+  if (picked.length === 0) {
+    const missing = prompt.plan.toInstall.some((entry) => entry.identifier !== prompt.mod.identifier);
+    await startInstallJob(prompt.mod, missing, prompt.choices);
+    return;
+  }
+  // Picked mods can bring dependencies, provider choices or conflicts of
+  // their own, so the plan is checked again with them before installing.
+  setInstallPending(prompt.mod.identifier, true);
+  errorMessage.value = undefined;
+  await planAndApply(prompt.mod, prompt.choices, {
+    ...(prompt.offered === undefined ? {} : { offered: prompt.offered }),
+    selected: picked,
+    confirmed: true,
+  });
 }
 
 function cancelDependencyInstall(): void {
@@ -405,11 +439,12 @@ async function startInstallJob(
   mod: CkanModule,
   installDependencies: boolean,
   choices: Record<string, string> = {},
+  optional: readonly string[] = [],
 ): Promise<void> {
   setInstallPending(mod.identifier, true);
   errorMessage.value = undefined;
   try {
-    const accepted = await installMod(mod.identifier, mod.version, installDependencies, choices);
+    const accepted = await installMod(mod.identifier, mod.version, installDependencies, choices, optional);
     addInstallJob(accepted.job);
   } catch (error) {
     reportError(error, "Install could not be started.");
