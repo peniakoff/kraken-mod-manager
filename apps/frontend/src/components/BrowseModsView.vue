@@ -48,7 +48,7 @@ const emit = defineEmits<{
   refreshRegistry: [];
   install: [mod: CkanModule];
   uninstall: [mod: InstalledMod];
-  confirmDependencyInstall: [];
+  confirmDependencyInstall: [optional: string[]];
   cancelDependencyInstall: [];
   continueWithChoices: [choices: Record<string, string>];
   selectMod: [mod: CkanModule | undefined];
@@ -152,7 +152,7 @@ const registryUpdated = computed(() =>
     <DependencyPromptDialog
       v-if="dependencyPrompt !== undefined"
       :prompt="dependencyPrompt"
-      @confirm="emit('confirmDependencyInstall')"
+      @confirm="emit('confirmDependencyInstall', $event)"
       @cancel="emit('cancelDependencyInstall')"
       @continue-with-choices="emit('continueWithChoices', $event)"
     />

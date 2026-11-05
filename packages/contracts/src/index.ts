@@ -231,10 +231,14 @@ export const installChoicesSchema = z
 
 export type InstallChoices = z.infer<typeof installChoicesSchema>;
 
+/** Identifiers of recommended or suggested mods to install along with the target. */
+export const installOptionalSchema = z.array(z.string().min(1).max(256)).max(64);
+
 export const installModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
   installDependencies: z.boolean().optional().default(false),
   choices: installChoicesSchema.optional(),
+  optional: installOptionalSchema.optional(),
 });
 
 export type InstallModRequest = z.infer<typeof installModRequestSchema>;
@@ -242,6 +246,7 @@ export type InstallModRequest = z.infer<typeof installModRequestSchema>;
 export const planModRequestSchema = z.object({
   version: z.string().min(1).max(128).optional(),
   choices: installChoicesSchema.optional(),
+  optional: installOptionalSchema.optional(),
 });
 
 export type PlanModRequest = z.infer<typeof planModRequestSchema>;
@@ -281,7 +286,11 @@ export const installPlanOptionalSchema = z.object({
   minVersion: z.string().min(1).optional(),
   maxVersion: z.string().min(1).optional(),
   requiredBy: z.string().min(1),
+  /** The mod to offer; absent when the name matches no mod or several providers. */
+  module: installPlanModuleRefSchema.optional(),
 });
+
+export type InstallPlanOptional = z.infer<typeof installPlanOptionalSchema>;
 
 export const installPlanChoiceSchema = z.object({
   key: z.string().min(1),

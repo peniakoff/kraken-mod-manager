@@ -364,6 +364,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         identifier,
         body.data.version,
         body.data.choices,
+        body.data.optional,
       );
       response.json(installPlanResponseSchema.parse(plan));
     } catch (error) {
@@ -395,6 +396,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         body.data.version,
         body.data.installDependencies,
         body.data.choices,
+        body.data.optional,
       );
       response.status(202).json(installAcceptedResponseSchema.parse({ job }));
     } catch (error) {

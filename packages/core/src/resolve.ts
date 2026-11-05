@@ -52,6 +52,11 @@ export interface InstallPlanOptional {
   minVersion?: string;
   maxVersion?: string;
   requiredBy: string;
+  /**
+   * The mod the user can pick: the one with this identifier, else the only
+   * provider of the name. Absent when nothing or several mods match.
+   */
+  module?: InstallPlanModuleRef;
 }
 
 export interface InstallPlanChoiceCandidate extends InstallPlanModuleRef {
@@ -84,6 +89,8 @@ export interface ResolveInstallPlanOptions {
   inventory: readonly InstalledModSummary[];
   /** User-selected provider identifiers keyed by `InstallPlanChoice.key`. */
   choices?: Readonly<Record<string, string>>;
+  /** Identifiers of recommended or suggested mods the user chose to install too. */
+  optional?: readonly string[];
 }
 
 interface PendingChoice {
@@ -93,7 +100,7 @@ interface PendingChoice {
 }
 
 export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallPlan {
-  const { target, registryModules, inventory, choices = {} } = options;
+  const { target, registryModules, inventory, choices = {}, optional: selectedOptional = [] } = options;
   const byIdentifier = indexByIdentifier(registryModules);
   const providers = new ProviderIndex(registryModules);
   const installed = new Map(inventory.map((mod) => [mod.identifier, mod]));
@@ -102,7 +109,8 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   const alreadySatisfied: InstallPlanSatisfied[] = [];
   const conflicts: InstallPlanConflict[] = [];
   const unmet: InstallPlanUnmet[] = [];
-  const optional: InstallPlanOptional[] = [];
+  // Single relationships keep their relation so the final list can match it.
+  const optional: Array<{ entry: InstallPlanOptional; relation?: CkanSingleRelationship }> = [];
   const pendingChoices = new Map<string, PendingChoice>();
   const satisfiedNames = new Set<string>();
   const visiting = new Set<string>();
@@ -224,12 +232,70 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     for (const kind of ["recommends", "suggests"] as const) {
       for (const relation of relationships[kind]) {
         if (relation.kind === "single") {
-          optional.push({ kind, name: relation.name, ...rangeOf(relation), requiredBy: module.identifier });
+          optional.push({
+            entry: { kind, name: relation.name, ...rangeOf(relation), requiredBy: module.identifier },
+            relation,
+          });
         } else if (relation.kind === "anyOf") {
-          optional.push({ kind, name: anyOfKey(relation.alternatives), requiredBy: module.identifier });
+          optional.push({ entry: { kind, name: anyOfKey(relation.alternatives), requiredBy: module.identifier } });
         }
       }
     }
+  }
+
+  /**
+   * Plans the optional mods the user picked as if the target depended on
+   * them, so their own dependencies, choices and conflicts are resolved in
+   * the same plan. An installed one is left as it is.
+   */
+  function planSelectedOptional(): void {
+    for (const identifier of new Set(selectedOptional)) {
+      if (identifier === target.identifier || planned.has(identifier) || installed.has(identifier)) {
+        continue;
+      }
+      const candidate = providers
+        .candidates({ kind: "single", name: identifier })
+        .find((entry) => entry.via === "identifier");
+      if (candidate === undefined) {
+        unmet.push({
+          name: identifier,
+          requiredBy: target.identifier,
+          message: `Optional mod ${identifier} is not available in the registry.`,
+        });
+        continue;
+      }
+      planModule(candidate.module, target, identifier, {});
+    }
+  }
+
+  /**
+   * One entry per name (a recommendation wins over a suggestion), without
+   * names that an installed or planned mod already satisfies.
+   */
+  function offeredOptional(): InstallPlanOptional[] {
+    const byName = new Map<string, { entry: InstallPlanOptional; relation?: CkanSingleRelationship }>();
+    for (const item of optional) {
+      const existing = byName.get(item.entry.name);
+      if (existing === undefined || (existing.entry.kind === "suggests" && item.entry.kind === "recommends")) {
+        byName.set(item.entry.name, item);
+      }
+    }
+    const offered: InstallPlanOptional[] = [];
+    for (const { entry, relation } of byName.values()) {
+      if (relation === undefined) {
+        offered.push(entry);
+        continue;
+      }
+      if (findInstalledSatisfier(relation) !== undefined || isSatisfiedByPlan(relation)) {
+        continue;
+      }
+      const candidates = providers.candidates(relation);
+      const pick =
+        candidates.find((candidate) => candidate.via === "identifier") ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+      offered.push(pick === undefined ? entry : { ...entry, module: toRef(pick.module) });
+    }
+    return offered;
   }
 
   function checkConflicts(module: CkanModule): void {
@@ -461,6 +527,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
   }
 
   resolveDepends(target);
+  planSelectedOptional();
   // Conflicts are checked once the plan is complete, so a module resolved early
   // still sees providers planned later in the walk.
   for (const module of [...planned.values(), target]) {
@@ -490,7 +557,7 @@ export function resolveInstallPlan(options: ResolveInstallPlanOptions): InstallP
     alreadySatisfied,
     conflicts,
     unmet,
-    optional,
+    optional: offeredOptional(),
     choices: choicesOut,
   };
 }

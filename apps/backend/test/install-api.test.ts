@@ -179,6 +179,22 @@ function fixtureMetaArchive(
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "RealSolarSystem" }],
       }),
     },
+    {
+      path: "CKAN-meta-master/RecommendingMod/RecommendingMod-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "RecommendingMod",
+        name: "Recommending Mod",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/RecommendingMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        recommends: [{ name: "ModuleManager" }],
+        suggests: [{ name: "AnotherMod" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "RecommendingMod" }],
+      }),
+    },
     ...[4096, 8192].map((resolution) => ({
       path: `CKAN-meta-master/RSSTextures${resolution}/RSSTextures${resolution}-1.0.0.ckan`,
       content: JSON.stringify({
@@ -310,6 +326,7 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
       url === "https://example.test/DependentMod.zip" ||
       url === "https://example.test/BrokenDependent.zip" ||
       url === "https://example.test/RealSolarSystem.zip" ||
+      url === "https://example.test/RecommendingMod.zip" ||
       url === "https://example.test/RSSTextures4096.zip" ||
       url === "https://example.test/RSSTextures8192.zip"
     ) {
@@ -723,6 +740,65 @@ describe("mod install API", () => {
     expect(inventory.body.mods).toEqual(
       expect.arrayContaining([expect.objectContaining({ identifier: "RSSTextures8192", status: "managed" })]),
     );
+  });
+
+  it("offers recommended and suggested mods in the plan", async () => {
+    const { app } = await createInstallTestApp();
+    const plan = await request(app).post("/api/v1/mods/RecommendingMod/plan").send({});
+
+    expect(plan.status).toBe(200);
+    expect(plan.body.optional).toEqual([
+      {
+        kind: "recommends",
+        name: "ModuleManager",
+        requiredBy: "RecommendingMod",
+        module: { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" },
+      },
+      {
+        kind: "suggests",
+        name: "AnotherMod",
+        requiredBy: "RecommendingMod",
+        module: { identifier: "AnotherMod", name: "Another Mod", version: "1.0.0" },
+      },
+    ]);
+  });
+
+  it("plans and installs the optional mods the user picked as manual installs", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const plan = await request(app).post("/api/v1/mods/RecommendingMod/plan").send({ optional: ["ModuleManager"] });
+    expect(plan.body.toInstall.map((entry: { identifier: string }) => entry.identifier).sort()).toEqual([
+      "ModuleManager",
+      "RecommendingMod",
+    ]);
+
+    const accepted = await request(app)
+      .post("/api/v1/mods/RecommendingMod/install")
+      .send({ installDependencies: true, optional: ["ModuleManager"] });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    expect(existsSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toBe(true);
+    expect(existsSync(join(ksp, "GameData", "AnotherMod"))).toBe(false);
+    expect(manifestRecord(home, "ModuleManager").autoInstalled).toBe(false);
+    expect(manifestRecord(home, "RecommendingMod").autoInstalled).toBe(false);
+  });
+
+  it("resolves picked optional mods even without installDependencies", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/RecommendingMod/install").send({ optional: ["AnotherMod"] });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    expect(existsSync(join(ksp, "GameData", "AnotherMod", "readme.txt"))).toBe(true);
+  });
+
+  it("rejects oversized optional selections", async () => {
+    const { app } = await createInstallTestApp();
+    const optional = Array.from({ length: 65 }, (_value, index) => `Mod${index}`);
+
+    const plan = await request(app).post("/api/v1/mods/RecommendingMod/plan").send({ optional });
+    const install = await request(app).post("/api/v1/mods/RecommendingMod/install").send({ optional });
+
+    expect(plan.status).toBe(400);
+    expect(install.status).toBe(400);
   });
 
   it("rejects dependency installs with pending choices", async () => {

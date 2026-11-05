@@ -154,15 +154,24 @@ function choicesBody(choices: Record<string, string> | undefined): { choices?: R
   return choices !== undefined && Object.keys(choices).length > 0 ? { choices } : {};
 }
 
+function optionalBody(optional: readonly string[] | undefined): { optional?: string[] } {
+  return optional !== undefined && optional.length > 0 ? { optional: [...optional] } : {};
+}
+
 export async function planModInstall(
   identifier: string,
   version?: string,
   choices?: Record<string, string>,
+  optional?: readonly string[],
 ): Promise<InstallPlanResponse> {
   return request(`/api/v1/mods/${encodeURIComponent(identifier)}/plan`, installPlanResponseSchema, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...(version === undefined ? {} : { version }), ...choicesBody(choices) }),
+    body: JSON.stringify({
+      ...(version === undefined ? {} : { version }),
+      ...choicesBody(choices),
+      ...optionalBody(optional),
+    }),
   });
 }
 
@@ -171,6 +180,7 @@ export async function installMod(
   version?: string,
   installDependencies = false,
   choices?: Record<string, string>,
+  optional?: readonly string[],
 ): Promise<InstallAcceptedResponse> {
   return request(`/api/v1/mods/${encodeURIComponent(identifier)}/install`, installAcceptedResponseSchema, {
     method: "POST",
@@ -179,6 +189,7 @@ export async function installMod(
       ...(version === undefined ? {} : { version }),
       installDependencies,
       ...choicesBody(choices),
+      ...optionalBody(optional),
     }),
   });
 }

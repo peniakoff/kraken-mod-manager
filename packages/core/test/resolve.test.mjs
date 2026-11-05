@@ -834,3 +834,177 @@ test("ignores installed dependents whose relationship was already broken", () =>
 
   assert.equal(plan.status, "ok");
 });
+
+function optionalFixture(extraTarget = {}) {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({
+      depends: [dep("SharedLib")],
+      recommends: [dep("Toolbar", { minVersion: "1.1" })],
+      suggests: [dep("KER")],
+    }),
+    ...extraTarget,
+  });
+  const sharedLib = mod({
+    identifier: "SharedLib",
+    name: "Shared Lib",
+    version: "1.0.0",
+    relationships: rels({ recommends: [dep("Toolbar")], suggests: [dep("SharedLibExtras")] }),
+  });
+  const toolbarOld = mod({ identifier: "Toolbar", name: "Toolbar", version: "1.0.0" });
+  const toolbar = mod({
+    identifier: "Toolbar",
+    name: "Toolbar",
+    version: "1.2.0",
+    relationships: rels({ depends: [dep("ToolbarLib")] }),
+  });
+  const toolbarLib = mod({ identifier: "ToolbarLib", name: "Toolbar Lib", version: "3.0.0" });
+  const ker = mod({ identifier: "KER", name: "Kerbal Engineer", version: "1.1.9" });
+  return [target, sharedLib, toolbarOld, toolbar, toolbarLib, ker];
+}
+
+test("offers the module behind each recommendation and suggestion once", () => {
+  const registryModules = optionalFixture();
+  const plan = resolveInstallPlan({ target: registryModules[0], registryModules, inventory: [] });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(plan.optional, [
+    {
+      kind: "recommends",
+      name: "Toolbar",
+      minVersion: "1.1",
+      requiredBy: "Target",
+      module: { identifier: "Toolbar", name: "Toolbar", version: "1.2.0" },
+    },
+    {
+      kind: "suggests",
+      name: "KER",
+      requiredBy: "Target",
+      module: { identifier: "KER", name: "Kerbal Engineer", version: "1.1.9" },
+    },
+    { kind: "suggests", name: "SharedLibExtras", requiredBy: "SharedLib" },
+  ]);
+});
+
+test("keeps the stronger kind when a mod is both recommended and suggested", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("SharedLib")], suggests: [dep("KER")] }),
+  });
+  const sharedLib = mod({ identifier: "SharedLib", name: "Shared Lib", version: "1.0.0", relationships: rels({ recommends: [dep("KER")] }) });
+  const ker = mod({ identifier: "KER", name: "Kerbal Engineer", version: "1.1.9" });
+  const plan = resolveInstallPlan({ target, registryModules: [target, sharedLib, ker], inventory: [] });
+
+  assert.deepEqual(
+    plan.optional.map((entry) => [entry.kind, entry.name, entry.requiredBy]),
+    [["recommends", "KER", "SharedLib"]],
+  );
+});
+
+test("prefers the recommended identifier over other providers of the name", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ recommends: [dep("Toolbar")] }),
+  });
+  const toolbar = mod({ identifier: "Toolbar", name: "Toolbar", version: "1.2.0" });
+  const fork = mod({ identifier: "ToolbarFork", name: "Toolbar Fork", version: "9.0.0", provides: ["Toolbar"] });
+  const plan = resolveInstallPlan({ target, registryModules: [target, toolbar, fork], inventory: [] });
+
+  assert.deepEqual(plan.optional[0]?.module, { identifier: "Toolbar", name: "Toolbar", version: "1.2.0" });
+});
+
+test("names no module for a virtual recommendation with several providers", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ recommends: [dep("RSSTextures")] }),
+  });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, rssTextures(4096), rssTextures(8192)],
+    inventory: [],
+  });
+
+  assert.deepEqual(plan.optional, [{ kind: "recommends", name: "RSSTextures", requiredBy: "Target" }]);
+});
+
+test("leaves out recommendations that are installed or already planned", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ depends: [dep("SharedLib")], recommends: [dep("SharedLib"), dep("ModuleManager")] }),
+  });
+  const sharedLib = mod({ identifier: "SharedLib", name: "Shared Lib", version: "1.0.0" });
+  const moduleManager = mod({ identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, sharedLib, moduleManager],
+    inventory: [{ identifier: "ModuleManager", version: "4.2.3", status: "managed" }],
+  });
+
+  assert.deepEqual(plan.optional, []);
+});
+
+test("plans selected optional mods with their own dependencies", () => {
+  const registryModules = optionalFixture();
+  const plan = resolveInstallPlan({
+    target: registryModules[0],
+    registryModules,
+    inventory: [],
+    optional: ["Toolbar", "KER"],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.deepEqual(ids(plan.toInstall).sort(), ["KER", "SharedLib", "Target", "Toolbar", "ToolbarLib"]);
+  assert.equal(plan.toInstall.find((entry) => entry.identifier === "Toolbar")?.version, "1.2.0");
+  assert.deepEqual(plan.optional.map((entry) => entry.name), ["SharedLibExtras"]);
+});
+
+test("blocks on a selected optional mod the registry does not have", () => {
+  const registryModules = optionalFixture();
+  const plan = resolveInstallPlan({ target: registryModules[0], registryModules, inventory: [], optional: ["Nope"] });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.unmet[0]?.message ?? "", /Nope/);
+});
+
+test("checks conflicts of selected optional mods", () => {
+  const target = mod({
+    identifier: "Target",
+    name: "Target",
+    version: "1.0.0",
+    relationships: rels({ recommends: [dep("Toolbar")] }),
+  });
+  const toolbar = mod({ identifier: "Toolbar", name: "Toolbar", version: "1.2.0", relationships: rels({ conflicts: [dep("Blizzy")] }) });
+  const blizzy = mod({ identifier: "Blizzy", name: "Blizzy", version: "1.0.0" });
+  const plan = resolveInstallPlan({
+    target,
+    registryModules: [target, toolbar, blizzy],
+    inventory: [{ identifier: "Blizzy", version: "1.0.0", status: "managed" }],
+    optional: ["Toolbar"],
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.conflicts[0]?.message ?? "", /Toolbar conflicts with installed Blizzy/);
+});
+
+test("skips a selected optional mod that is already installed", () => {
+  const registryModules = optionalFixture();
+  const plan = resolveInstallPlan({
+    target: registryModules[0],
+    registryModules,
+    inventory: [{ identifier: "KER", version: "1.1.9", status: "managed" }],
+    optional: ["KER"],
+  });
+
+  assert.equal(plan.status, "ok");
+  assert.equal(ids(plan.toInstall).includes("KER"), false);
+});
