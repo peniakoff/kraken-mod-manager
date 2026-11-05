@@ -1,6 +1,6 @@
 # Kraken Mod Manager (KMM)
 
-![Kraken Mod Manager](assets/logo.png)
+![Kraken Mod Manager: a local-first mod manager for Kerbal Space Program](assets/brand/readme-banner.svg)
 
 Kraken Mod Manager (KMM) is a modern, lightweight, cross-platform mod manager
 for Kerbal Space Program (KSP). It takes architectural inspiration from CKAN,
@@ -8,6 +8,10 @@ but is built with TypeScript, Node.js, and Vue.
 
 Tame the modding kraken: discover mods from the official CKAN registry, plan
 dependencies, and install or uninstall with a local-first workflow.
+
+![Browsing the CKAN registry in Kraken Mod Manager](docs/images/screenshot-browse.png)
+
+![The installed mods table with update and uninstall actions](docs/images/screenshot-installed.png)
 
 ## Prerequisites
 
@@ -132,17 +136,19 @@ The local API includes `GET /api/v1/health`, `GET /api/v1/ksp/installations`,
 
 ## Branding
 
-Project artwork lives in [`assets/`](assets/):
+The brand mark is hand-written SVG in [`assets/brand/`](assets/brand/):
 
 | File | Use |
 | --- | --- |
-| `logo.png` | Square mark (512×512) for README and general branding |
-| `logo-256.png` | Smaller square mark |
-| `logo-banner.png` | Wide banner (1024×558) |
+| `kraken-mark.svg` | The mark on a transparent ground (app sidebar, setup screen) |
+| `kraken-app-icon.svg` | The mark on a rounded tile; also served as `favicon.svg` |
+| `kraken-app-icon-maskable.svg` | Full-bleed tile for maskable PWA and Apple touch icons |
+| `readme-banner.svg` | The README banner (embeds Host Grotesk, SIL OFL 1.1) |
 
-Web favicons and PWA-sized icons are under
-`apps/frontend/public/` (`favicon.ico`, `apple-touch-icon.png`, `icon-192.png`,
-`icon-512.png`).
+`assets/logo.png` and `assets/logo-256.png` are raster copies of the mark.
+The PNG and ICO icons under `apps/frontend/public/` are generated from the SVG
+sources; regenerate them after changing a source with
+`scripts/brand/render-icons.sh` (needs Chrome or Chromium and ImageMagick 7).
 
 ## Verification
 
