@@ -5,6 +5,7 @@ import {
   healthResponseSchema,
   installAcceptedResponseSchema,
   installPlanResponseSchema,
+  installRecoveryReportSchema,
   installedModsResponseSchema,
   installationsResponseSchema,
   jobProgressEventSchema,
@@ -18,6 +19,7 @@ import {
   type HealthResponse,
   type InstallAcceptedResponse,
   type InstallPlanResponse,
+  type InstallRecoveryReport,
   type InstalledModsResponse,
   type InstallationsResponse,
   type JobProgressEvent,
@@ -142,6 +144,10 @@ export async function getInstalledMods(): Promise<InstalledModsResponse> {
 
 export async function getUpdates(): Promise<UpdatesResponse> {
   return request("/api/v1/updates", updatesResponseSchema);
+}
+
+export async function getInstallRecovery(): Promise<InstallRecoveryReport> {
+  return request("/api/v1/install-recovery", installRecoveryReportSchema);
 }
 
 function choicesBody(choices: Record<string, string> | undefined): { choices?: Record<string, string> } {

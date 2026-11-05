@@ -6,6 +6,7 @@ import {
   installAcceptedResponseSchema,
   installModRequestSchema,
   installPlanResponseSchema,
+  installRecoveryReportSchema,
   installedModsResponseSchema,
   installationsResponseSchema,
   jobProgressEventSchema,
@@ -314,6 +315,10 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get("/api/v1/install-recovery", (_request, response) => {
+    response.json(installRecoveryReportSchema.parse(dependencies.installService.getRecoveryReport()));
   });
 
   app.get("/api/v1/updates", async (_request, response, next) => {

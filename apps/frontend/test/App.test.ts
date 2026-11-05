@@ -45,6 +45,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -149,6 +150,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -235,6 +237,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -322,6 +325,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -416,6 +420,7 @@ describe("App", () => {
           { status: 200 },
         ),
       )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ rolledBack: [], failed: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "missing", moduleCount: 0 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ mods: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ updates: [] }), { status: 200 }))
@@ -505,6 +510,7 @@ describe("App", () => {
             { status: 200 },
           ),
         )
+        .mockResolvedValueOnce(new Response(JSON.stringify({ rolledBack: [], failed: [] }), { status: 200 }))
         .mockResolvedValueOnce(
           new Response(
             JSON.stringify({
@@ -563,6 +569,7 @@ describe("App", () => {
       if (url === "/api/v1/health") {
         return json({ status: "ok", version: "test-version" });
       }
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({ configured: true, installation });
       }
@@ -631,6 +638,7 @@ describe("App", () => {
       if (url === "/api/v1/health") {
         return json({ status: "ok", version: "test-version" });
       }
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({ configured: true, installation });
       }
@@ -693,6 +701,7 @@ describe("App", () => {
       if (url === "/api/v1/health") {
         return json({ status: "ok", version: "test-version" });
       }
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -762,6 +771,7 @@ describe("App service status", () => {
     return vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
           configured: true,
@@ -822,5 +832,46 @@ describe("App service status", () => {
     await clickRefresh(wrapper);
     await vi.waitFor(() => expect(systems(wrapper)).toContain("Service connected (test-version)"));
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+});
+
+describe("App install recovery notice", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+
+  it("shows what the service undid at startup until it is dismissed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/install-recovery") {
+          return json({
+            rolledBack: [{ jobId: "job-1", modules: [{ identifier: "MechJeb2", name: "MechJeb 2", restoredVersion: "2.14.0" }] }],
+            failed: [],
+          });
+        }
+        if (url === "/api/v1/config") {
+          return json({
+            configured: true,
+            installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+          });
+        }
+        if (url === "/api/v1/registry") return json({ status: "missing", moduleCount: 0 });
+        if (url === "/api/v1/installed-mods") return json({ mods: [] });
+        if (url === "/api/v1/updates") return json({ updates: [] });
+        throw new Error(`unexpected request ${url}`);
+      }),
+    );
+    const wrapper = mount(App);
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain("MechJeb 2: restored 2.14.0"));
+    expect(wrapper.text()).toContain("Active installation");
+
+    await wrapper.get('button[aria-label="Dismiss notice"]').trigger("click");
+    expect(wrapper.find('[data-testid="recovery-notice"]').exists()).toBe(false);
   });
 });

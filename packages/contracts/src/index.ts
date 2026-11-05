@@ -377,3 +377,35 @@ export const jobProgressEventSchema = z.object({
 });
 
 export type JobProgressEvent = z.infer<typeof jobProgressEventSchema>;
+
+export const recoveredModuleSchema = z.object({
+  identifier: z.string().min(1),
+  name: z.string().min(1),
+  /** The version put back; absent when the mod was new and is now removed. */
+  restoredVersion: z.string().min(1).optional(),
+});
+
+/** What the startup check did with installs a previous run left unfinished. */
+export const installRecoveryReportSchema = z.object({
+  rolledBack: z.array(
+    z.object({
+      jobId: z.string().min(1),
+      modules: z.array(recoveredModuleSchema),
+    }),
+  ),
+  failed: z.array(
+    z.object({
+      jobId: z.string().min(1),
+      message: z.string().min(1),
+    }),
+  ),
+  /** Backups from versions before 0.6.0, which have no journal to undo them with. */
+  untrackedBackups: z
+    .object({
+      count: z.number().int().positive(),
+      directory: z.string().min(1),
+    })
+    .optional(),
+});
+
+export type InstallRecoveryReport = z.infer<typeof installRecoveryReportSchema>;
