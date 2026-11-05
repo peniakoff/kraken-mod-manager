@@ -147,10 +147,10 @@ test("merges managed and detected inventory", () => {
 
 test("verifies download hashes", () => {
   assert.throws(
-    () => verifyDownloadHash(new Uint8Array(), { sha256: "abc" }, { sha256: "def" }),
+    () => verifyDownloadHash({ sha256: "abc" }, { sha256: "def" }),
     (error) => error instanceof InstallPolicyError && error.code === "HASH_MISMATCH",
   );
-  verifyDownloadHash(new Uint8Array(), { sha256: "abc" }, { sha256: "ABC" });
+  verifyDownloadHash({ sha256: "abc" }, { sha256: "ABC" });
 });
 
 test("findAvailableUpdates reports newer registry versions only", () => {

@@ -17,8 +17,10 @@ import {
   type UninstallPlan,
 } from "@kraken/core";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import {
   InstallManifestError,
   InstallManifestStore,
@@ -363,26 +365,30 @@ export class InstallService {
       ...(module.downloadSize !== undefined ? { bytesTotal: module.downloadSize } : {}),
     });
 
-    const download = await this.http.get(module.download, (progress) => {
-      this.jobStore.update(jobId, {
-        phase: "downloading",
-        bytesReceived: progress.bytesReceived,
-        ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
-      });
-    });
-
-    this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
-    verifyDownloadHash(download.bytes, module.downloadHash, {
-      sha1: download.sha1,
-      sha256: download.sha256,
-    });
-
     await mkdir(this.downloadCacheDirectory, { recursive: true });
     const cachePath = resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version);
-    await writeFile(cachePath, download.bytes);
+    // A unique partial name keeps concurrent downloads of the same archive
+    // apart; only a verified archive takes the cache name.
+    const partialPath = `${cachePath}.${globalThis.crypto.randomUUID()}.partial`;
+    try {
+      const download = await this.http.download(module.download, partialPath, (progress) => {
+        this.jobStore.update(jobId, {
+          phase: "downloading",
+          bytesReceived: progress.bytesReceived,
+          ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
+        });
+      });
+
+      this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
+      verifyDownloadHash(module.downloadHash, { sha1: download.sha1, sha256: download.sha256 });
+      await rename(partialPath, cachePath);
+    } catch (error: unknown) {
+      await rm(partialPath, { force: true });
+      throw error;
+    }
 
     this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
-    const zipEntries = this.zip.listEntries(download.bytes);
+    const zipEntries = await this.zip.listEntries(cachePath);
     const mappings = resolveInstallMappings(
       module,
       zipEntries.map((entry) => entry.path),
@@ -401,8 +407,8 @@ export class InstallService {
       const installedFiles: string[] = [];
 
       try {
-        // Validate every mapping before writing anything, then decompress
-        // only the mapped entries, a batch at a time.
+        // Validate every mapping before writing anything, then stream only
+        // the mapped entries from the archive on disk.
         const destinationsBySource = new Map<string, string[]>();
         const selectedEntries: ZipEntryInfo[] = [];
         for (const mapping of mappings) {
@@ -426,12 +432,21 @@ export class InstallService {
           }
         }
 
-        await this.zip.extractEntries(download.bytes, selectedEntries, async (entry, data) => {
-          for (const relativeDestination of destinationsBySource.get(entry.path) ?? []) {
+        await this.zip.extractEntries(cachePath, selectedEntries, async (entry, source) => {
+          const [first, ...copies] = destinationsBySource.get(entry.path) ?? [];
+          if (first === undefined) {
+            throw new InstallServiceError(`No destination for archive entry: ${entry.path}`, "INSTALL_FAILED");
+          }
+          const firstDestination = await this.resolveDestination(canonicalRoot, first);
+          installedFiles.push(first);
+          await mkdir(dirname(firstDestination), { recursive: true });
+          await pipeline(source, createWriteStream(firstDestination));
+          // The entry stream can be read once; further mappings copy the file.
+          for (const relativeDestination of copies) {
             const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
             installedFiles.push(relativeDestination);
             await mkdir(dirname(absoluteDestination), { recursive: true });
-            await writeFile(absoluteDestination, data);
+            await copyFile(firstDestination, absoluteDestination);
           }
         });
 
