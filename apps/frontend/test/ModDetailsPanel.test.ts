@@ -231,6 +231,18 @@ describe("ModDetailsPanel component", () => {
     expect(wrapper.text()).not.toContain("vv112");
   });
 
+  it("keeps the install button focusable but inert while the mod is installing", async () => {
+    const wrapper = mount(ModDetailsPanel, {
+      props: { mod: sampleMod, versions: [sampleMod], installedMods: [], availableUpdates: [], installingIdentifiers: ["ModuleManager"] },
+    });
+    const install = wrapper.find('[data-testid="details-install-btn"]');
+
+    expect(install.attributes("disabled")).toBeUndefined();
+    expect(install.attributes("aria-disabled")).toBe("true");
+    await install.trigger("click");
+    expect(wrapper.emitted("install")).toBeUndefined();
+  });
+
   it("emits close on close button click and escape key", async () => {
     const wrapper = mount(ModDetailsPanel, {
       props: {

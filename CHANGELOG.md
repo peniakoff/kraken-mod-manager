@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The mod details panel no longer shows a doubled prefix such as "vv112.0.1" for versions that already start with "v".
+- The dependency and provider-choice dialog works from the keyboard: focus moves into it, Tab stays inside (also past a group of provider options), Escape cancels without closing the details panel underneath, and focus returns to the Install button that opened it.
 
 ## [0.4.0] - 2026-11-05
 

@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import type {
   AvailableUpdate,
   CkanModule,
-  InstallPlanResponse,
   InstalledMod,
   RegistryResponse,
 } from "@kraken/contracts";
@@ -11,6 +10,7 @@ import ModFilterBar from "./ModFilterBar.vue";
 import ModPagination from "./ModPagination.vue";
 import ModTable from "./ModTable.vue";
 import ModDetailsPanel from "./ModDetailsPanel.vue";
+import DependencyPromptDialog, { type DependencyPrompt } from "./DependencyPromptDialog.vue";
 import AppIcon from "./AppIcon.vue";
 import ViewHeader from "./ViewHeader.vue";
 import { formatCount, formatRelativeTime } from "../format.js";
@@ -26,7 +26,7 @@ const props = defineProps<{
   availableUpdates: AvailableUpdate[];
   installingIdentifiers: string[];
   uninstallingIdentifier?: string;
-  dependencyPrompt?: { mod: CkanModule; plan: InstallPlanResponse; choices: Record<string, string> };
+  dependencyPrompt?: DependencyPrompt;
   selectedTag: string;
   customTag: string;
   compatibleOnly: boolean;
@@ -54,49 +54,6 @@ const emit = defineEmits<{
   selectMod: [mod: CkanModule | undefined];
   selectVersion: [mod: CkanModule];
 }>();
-
-const missingDependencies = computed(() => {
-  const prompt = props.dependencyPrompt;
-  if (prompt === undefined) {
-    return [];
-  }
-  return prompt.plan.toInstall.filter((entry) => entry.identifier !== prompt.mod.identifier);
-});
-
-const pendingChoices = computed(() => {
-  const prompt = props.dependencyPrompt;
-  return prompt !== undefined && prompt.plan.status === "choice-required" ? prompt.plan.choices : [];
-});
-
-const selectedChoices = ref<Record<string, string>>({});
-watch(
-  () => props.dependencyPrompt,
-  () => {
-    selectedChoices.value = {};
-  },
-);
-
-const allChoicesSelected = computed(() =>
-  pendingChoices.value.every((choice) => selectedChoices.value[choice.key] !== undefined),
-);
-
-function requiredByLabel(identifiers: string[]): string {
-  const plan = props.dependencyPrompt?.plan;
-  const names = new Map([plan?.target, ...(plan?.toInstall ?? [])].flatMap((ref) => (ref ? [[ref.identifier, ref.name]] : [])));
-  return identifiers.map((identifier) => names.get(identifier) ?? identifier).join(", ");
-}
-
-function choiceInputId(key: string, identifier: string): string {
-  return `choice-${encodeURIComponent(key)}-${encodeURIComponent(identifier)}`;
-}
-
-function continueWithChoices(): void {
-  const prompt = props.dependencyPrompt;
-  if (prompt === undefined || !allChoicesSelected.value) {
-    return;
-  }
-  emit("continueWithChoices", { ...prompt.choices, ...selectedChoices.value });
-}
 
 const offset = computed(() => props.currentPage * props.pageSize);
 
@@ -192,71 +149,13 @@ const registryUpdated = computed(() =>
       </section>
     </template>
 
-    <div
+    <DependencyPromptDialog
       v-if="dependencyPrompt !== undefined"
-      class="dialog-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dependency-prompt-title"
-    >
-      <div v-if="pendingChoices.length > 0" class="dialog">
-        <h2 id="dependency-prompt-title" class="text-xl font-semibold">Choose a provider</h2>
-        <p class="mt-2 text-muted">
-          {{ dependencyPrompt.mod.name }} needs one of several mods. Pick the one to install.
-        </p>
-        <div class="mt-5 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-          <fieldset v-for="choice in pendingChoices" :key="choice.key" class="rounded-md border border-line p-4">
-            <legend class="px-1 text-sm font-medium">{{ choice.label }}, required by {{ requiredByLabel(choice.requiredBy) }}</legend>
-            <div class="mt-1 space-y-1">
-              <div
-                v-for="candidate in choice.candidates"
-                :key="candidate.identifier"
-                class="flex items-center gap-3 rounded-sm px-1 py-1.5 hover:bg-raised"
-              >
-                <input
-                  :id="choiceInputId(choice.key, candidate.identifier)"
-                  v-model="selectedChoices[choice.key]"
-                  type="radio"
-                  class="h-4 w-4 accent-accent"
-                  :name="`choice-${choice.key}`"
-                  :value="candidate.identifier"
-                />
-                <label :for="choiceInputId(choice.key, candidate.identifier)" class="text-sm">
-                  {{ candidate.name }}
-                  <span class="readout text-muted">{{ candidate.version }}</span>
-                  <span v-if="candidate.via === 'provides'" class="ml-1 text-[13px] text-muted">provides {{ choice.label }}</span>
-                </label>
-              </div>
-            </div>
-          </fieldset>
-        </div>
-        <div class="mt-6 flex flex-wrap gap-3">
-          <button class="btn btn-primary" type="button" :disabled="!allChoicesSelected" @click="continueWithChoices">
-            Continue
-          </button>
-          <button class="btn btn-secondary" type="button" @click="emit('cancelDependencyInstall')">Cancel</button>
-        </div>
-      </div>
-      <div v-else class="dialog">
-        <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install required dependencies?</h2>
-        <p class="mt-2 text-muted">
-          {{ dependencyPrompt.mod.name }} requires
-          {{ missingDependencies.map((entry) => entry.name).join(", ") }}. Install them automatically?
-        </p>
-        <ul class="mt-4 divide-y divide-line rounded-md border border-line text-sm">
-          <li v-for="entry in missingDependencies" :key="entry.identifier" class="flex justify-between gap-3 px-3 py-2">
-            <span>{{ entry.name }}</span>
-            <span class="readout text-muted">{{ entry.version }}</span>
-          </li>
-        </ul>
-        <div class="mt-6 flex flex-wrap gap-3">
-          <button class="btn btn-primary" type="button" @click="emit('confirmDependencyInstall')">
-            Install automatically
-          </button>
-          <button class="btn btn-secondary" type="button" @click="emit('cancelDependencyInstall')">Cancel</button>
-        </div>
-      </div>
-    </div>
+      :prompt="dependencyPrompt"
+      @confirm="emit('confirmDependencyInstall')"
+      @cancel="emit('cancelDependencyInstall')"
+      @continue-with-choices="emit('continueWithChoices', $event)"
+    />
 
     <ModDetailsPanel
       v-if="selectedMod !== undefined"

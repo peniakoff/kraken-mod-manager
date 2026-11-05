@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { UninstallPlanResponse } from "@kraken/contracts";
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { ref, watch } from "vue";
+import { useModalFocus } from "../useModalFocus.js";
 
 const props = defineProps<{
   plan: UninstallPlanResponse;
@@ -34,53 +35,15 @@ function confirm(): void {
 
 const containerRef = ref<HTMLElement>();
 const cancelButtonRef = ref<HTMLButtonElement>();
-let previousActiveElement: Element | null = null;
 
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
-
-// Listens in the capture phase and stops Escape/Tab there, so a dialog
-// underneath (the mod details panel) does not close or steal focus.
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") {
-    event.stopPropagation();
+useModalFocus({
+  container: containerRef,
+  initialFocus: cancelButtonRef,
+  onEscape: () => {
     if (!props.busy) {
       emit("cancel");
     }
-    return;
-  }
-  if (event.key !== "Tab" || containerRef.value === undefined) {
-    return;
-  }
-  event.stopPropagation();
-  const focusable = [...containerRef.value.querySelectorAll<HTMLElement>(FOCUSABLE)];
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (first === undefined || last === undefined) {
-    event.preventDefault();
-    return;
-  }
-  const active = document.activeElement;
-  const inside = active !== null && containerRef.value.contains(active);
-  if (event.shiftKey && (!inside || active === first)) {
-    last.focus();
-    event.preventDefault();
-  } else if (!event.shiftKey && (!inside || active === last)) {
-    first.focus();
-    event.preventDefault();
-  }
-}
-
-onMounted(() => {
-  previousActiveElement = document.activeElement;
-  window.addEventListener("keydown", handleKeydown, true);
-  cancelButtonRef.value?.focus();
-});
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleKeydown, true);
-  if (previousActiveElement instanceof HTMLElement && previousActiveElement.isConnected) {
-    previousActiveElement.focus();
-  }
+  },
 });
 
 function orphanInputId(identifier: string): string {
