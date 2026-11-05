@@ -3,10 +3,10 @@
   "version": "0.5.0",
   "private": true,
   "description": "A lightweight, cross-platform mod manager for Kerbal Space Program.",
-  "packageManager": "pnpm@11.13.1",
+  "packageManager": "pnpm@11.28.9+sha512.35421cea2720eca3f5ad722b67e8ef18f4d3cd4745ed2fcfeb0dc288d4e9437fad3870d91ee6e83f268f0f6f7e0f62723317b19617bb45ee4333172ef51159f8",
   "engines": {
     "node": ">=24.0.0",
-    "pnpm": ">=11.13.1"
+    "pnpm": ">=11.28.9"
   },
   "scripts": {
     "dev": "pnpm --filter @kraken/contracts build && pnpm --filter @kraken/core build && pnpm --parallel --filter @kraken/backend --filter @kraken/frontend dev",
@@ -19,8 +19,8 @@
     "smoke:sea": "pnpm --filter @kraken/backend smoke:sea"
   },
   "devDependencies": {
-    "oxlint": "^1.82.0",
-    "prettier": "^3.9.6",
+    "oxlint": "^1.90.0",
+    "prettier": "^3.9.10",
     "typescript": "^7.0.2"
   }
 }
