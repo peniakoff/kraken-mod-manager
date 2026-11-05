@@ -18,7 +18,7 @@ import {
 } from "@kraken/core";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
@@ -260,6 +260,7 @@ export class InstallService {
         const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isTarget);
         completed.push(snapshot);
       }
+      await this.discardBackups(completed);
 
       this.jobStore.update(jobId, {
         status: "succeeded",
@@ -291,6 +292,21 @@ export class InstallService {
         error: message,
         message,
       });
+    }
+  }
+
+  /**
+   * Backups stay until the whole job succeeds, because a later module's
+   * failure rolls earlier ones back. A backup that cannot be deleted does not
+   * fail a finished install; it is reported and found again at startup.
+   */
+  private async discardBackups(completed: readonly ModuleInstallSnapshot[]): Promise<void> {
+    for (const snapshot of completed) {
+      try {
+        await this.discardBackup(snapshot.installationPath, snapshot.backup);
+      } catch (error: unknown) {
+        console.warn(`Could not delete install backup ${snapshot.backup.directory}: ${errorMessage(error)}`);
+      }
     }
   }
 
@@ -366,29 +382,40 @@ export class InstallService {
     });
 
     await mkdir(this.downloadCacheDirectory, { recursive: true });
-    const cachePath = resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version);
-    // A unique partial name keeps concurrent downloads of the same archive
-    // apart; only a verified archive takes the cache name.
-    const partialPath = `${cachePath}.${globalThis.crypto.randomUUID()}.partial`;
+    // Each download gets its own name, so concurrent jobs never share a file,
+    // and it is deleted once this module is installed or has failed.
+    const downloadPath = `${resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version)}.${globalThis.crypto.randomUUID()}.download`;
     try {
-      const download = await this.http.download(module.download, partialPath, (progress) => {
-        this.jobStore.update(jobId, {
-          phase: "downloading",
-          bytesReceived: progress.bytesReceived,
-          ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
-        });
-      });
-
-      this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
-      verifyDownloadHash(module.downloadHash, { sha1: download.sha1, sha256: download.sha256 });
-      await rename(partialPath, cachePath);
-    } catch (error: unknown) {
-      await rm(partialPath, { force: true });
-      throw error;
+      return await this.installFromDownload(jobId, kspPath, module, stepLabel, isTarget, downloadPath);
+    } finally {
+      await rm(downloadPath, { force: true });
     }
+  }
+
+  private async installFromDownload(
+    jobId: string,
+    kspPath: string,
+    module: CkanModule,
+    stepLabel: string,
+    isTarget: boolean,
+    downloadPath: string,
+  ): Promise<ModuleInstallSnapshot> {
+    if (module.download === undefined || module.download.length === 0) {
+      throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
+    }
+    const download = await this.http.download(module.download, downloadPath, (progress) => {
+      this.jobStore.update(jobId, {
+        phase: "downloading",
+        bytesReceived: progress.bytesReceived,
+        ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
+      });
+    });
+
+    this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
+    verifyDownloadHash(module.downloadHash, { sha1: download.sha1, sha256: download.sha256 });
 
     this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
-    const zipEntries = await this.zip.listEntries(cachePath);
+    const zipEntries = await this.zip.listEntries(downloadPath);
     const mappings = resolveInstallMappings(
       module,
       zipEntries.map((entry) => entry.path),
@@ -402,37 +429,39 @@ export class InstallService {
       const previous = manifest.mods.find(
         (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
       );
-      const previousFiles = await this.readInstalledFiles(canonicalRoot, previous?.files ?? []);
       const previousRecord = previous === undefined ? undefined : { ...previous, files: [...previous.files] };
+
+      // Validate every mapping before touching any file.
+      const destinationsBySource = new Map<string, string[]>();
+      const selectedEntries: ZipEntryInfo[] = [];
+      for (const mapping of mappings) {
+        if (!isAllowedDestination(mapping.destinationPath)) {
+          throw new InstallPolicyError(
+            `Destination escapes allowed roots: ${mapping.destinationPath}`,
+            "INVALID_DESTINATION",
+          );
+        }
+        const entry = entriesByPath.get(mapping.sourcePath);
+        if (entry === undefined) {
+          throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
+        }
+        const destinations = destinationsBySource.get(entry.path);
+        const relativeDestination = normalizeSlashPath(mapping.destinationPath);
+        if (destinations === undefined) {
+          destinationsBySource.set(entry.path, [relativeDestination]);
+          selectedEntries.push(entry);
+        } else {
+          destinations.push(relativeDestination);
+        }
+      }
+
+      // The previous version moves out of the way instead of being read into
+      // memory; it comes back if anything below fails.
+      const backup = await this.backUpFiles(canonicalRoot, previous?.files ?? []);
       const installedFiles: string[] = [];
 
       try {
-        // Validate every mapping before writing anything, then stream only
-        // the mapped entries from the archive on disk.
-        const destinationsBySource = new Map<string, string[]>();
-        const selectedEntries: ZipEntryInfo[] = [];
-        for (const mapping of mappings) {
-          if (!isAllowedDestination(mapping.destinationPath)) {
-            throw new InstallPolicyError(
-              `Destination escapes allowed roots: ${mapping.destinationPath}`,
-              "INVALID_DESTINATION",
-            );
-          }
-          const entry = entriesByPath.get(mapping.sourcePath);
-          if (entry === undefined) {
-            throw new InstallServiceError(`Missing archive entry: ${mapping.sourcePath}`, "INSTALL_FAILED");
-          }
-          const destinations = destinationsBySource.get(entry.path);
-          const relativeDestination = normalizeSlashPath(mapping.destinationPath);
-          if (destinations === undefined) {
-            destinationsBySource.set(entry.path, [relativeDestination]);
-            selectedEntries.push(entry);
-          } else {
-            destinations.push(relativeDestination);
-          }
-        }
-
-        await this.zip.extractEntries(cachePath, selectedEntries, async (entry, source) => {
+        await this.zip.extractEntries(downloadPath, selectedEntries, async (entry, source) => {
           const [first, ...copies] = destinationsBySource.get(entry.path) ?? [];
           if (first === undefined) {
             throw new InstallServiceError(`No destination for archive entry: ${entry.path}`, "INSTALL_FAILED");
@@ -450,12 +479,8 @@ export class InstallService {
           }
         });
 
-        const installedSet = new Set(installedFiles);
-        const staleFiles = previous?.files.filter((file) => !installedSet.has(file)) ?? [];
-        for (const staleFile of [...staleFiles].sort((left, right) => right.length - left.length)) {
-          await this.removeInstalledPath(canonicalRoot, staleFile);
-        }
-        await this.pruneEmptyParents(canonicalRoot, staleFiles);
+        // Folders that only the previous version used are empty now.
+        await this.pruneEmptyParents(canonicalRoot, previous?.files ?? []);
 
         const record: ManagedModRecord = {
           identifier: module.identifier,
@@ -477,10 +502,10 @@ export class InstallService {
           installationPath: canonicalRoot,
           installedFiles: [...installedFiles],
           ...(previousRecord !== undefined ? { previousRecord } : {}),
-          previousFiles,
+          backup,
         };
       } catch (error: unknown) {
-        await this.rollbackInstall(canonicalRoot, installedFiles, previousFiles);
+        await this.rollbackInstall(canonicalRoot, installedFiles, backup);
         throw error;
       }
     });
@@ -498,7 +523,7 @@ export class InstallService {
         if (snapshot.installationPath !== canonicalRoot) {
           continue;
         }
-        await this.rollbackInstall(canonicalRoot, snapshot.installedFiles, snapshot.previousFiles);
+        await this.rollbackInstall(canonicalRoot, snapshot.installedFiles, snapshot.backup);
         if (snapshot.previousRecord === undefined) {
           manifest = {
             schemaVersion: 2,
@@ -557,25 +582,113 @@ export class InstallService {
     await rm(absolute, { force: true });
   }
 
-  private async readInstalledFiles(kspRoot: string, files: readonly string[]): Promise<Map<string, Uint8Array>> {
-    const contents = new Map<string, Uint8Array>();
-    for (const relativePath of files) {
-      const absolute = await this.resolveDestination(kspRoot, relativePath);
-      try {
-        contents.set(relativePath, await readFile(absolute));
-      } catch (error: unknown) {
-        if (!isMissingFile(error)) {
-          throw error;
+  /**
+   * Moves `files` into a new backup folder under the KSP root, on the same
+   * file system as GameData, so the move is a rename rather than a copy.
+   * Files already missing are skipped. If a move fails, the files moved so
+   * far go back before the error propagates.
+   */
+  private async backUpFiles(kspRoot: string, files: readonly string[]): Promise<InstallBackup> {
+    const backup: InstallBackup = {
+      directory: join(kspRoot, BACKUP_DIRECTORY, globalThis.crypto.randomUUID()),
+      files: [],
+    };
+    try {
+      for (const relativePath of files) {
+        const source = await this.resolveDestination(kspRoot, relativePath);
+        if (await moveFile(source, resolveBackupPath(backup.directory, relativePath))) {
+          backup.files.push(relativePath);
         }
       }
+    } catch (error: unknown) {
+      await this.restoreBackup(kspRoot, backup);
+      throw error;
     }
-    return contents;
+    return backup;
+  }
+
+  /** Moves backed-up files back into place and deletes the backup folder once it is empty. */
+  private async restoreBackup(kspRoot: string, backup: InstallBackup): Promise<void> {
+    let restoreError: unknown;
+    for (const relativePath of backup.files) {
+      try {
+        const destination = await this.resolveDestination(kspRoot, relativePath);
+        await moveFile(resolveBackupPath(backup.directory, relativePath), destination);
+      } catch (error: unknown) {
+        restoreError ??= error;
+      }
+    }
+    if (restoreError !== undefined) {
+      throw new InstallServiceError(
+        `Could not restore the previous version from ${backup.directory}: ${errorMessage(restoreError)}`,
+        "INSTALL_FAILED",
+      );
+    }
+    await this.discardBackup(kspRoot, backup);
+  }
+
+  /** Deletes a backup folder, and the backup root once nothing else is in it. */
+  private async discardBackup(kspRoot: string, backup: InstallBackup): Promise<void> {
+    await rm(backup.directory, { recursive: true, force: true });
+    const backupRoot = join(kspRoot, BACKUP_DIRECTORY);
+    try {
+      await rmdir(backupRoot);
+    } catch (error: unknown) {
+      // Another job's backup still lives there, or the root is already gone.
+      if (!isMissingFile(error) && !isDirectoryNotEmpty(error)) {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Startup housekeeping: deletes leftover downloads from earlier runs and
+   * reports backups left by an interrupted install. Those backups can hold
+   * the only copy of a previous mod version, so they are never deleted
+   * automatically. Must not run while an install is active.
+   */
+  async cleanupTemporaryFiles(kspPath?: string): Promise<void> {
+    let names: string[] = [];
+    try {
+      names = await readdir(this.downloadCacheDirectory);
+    } catch (error: unknown) {
+      if (!isMissingFile(error)) {
+        throw error;
+      }
+    }
+    for (const name of names) {
+      if (TEMPORARY_DOWNLOAD.test(name)) {
+        await rm(join(this.downloadCacheDirectory, name), { force: true });
+      }
+    }
+
+    if (kspPath === undefined) {
+      return;
+    }
+    const backupRoot = join(await this.fileSystem.realpath(kspPath), BACKUP_DIRECTORY);
+    let backups: string[];
+    try {
+      backups = await readdir(backupRoot);
+    } catch (error: unknown) {
+      if (isMissingFile(error)) {
+        return;
+      }
+      throw error;
+    }
+    if (backups.length === 0) {
+      await rmdir(backupRoot);
+      return;
+    }
+    console.warn(
+      `Found ${backups.length} backup(s) from an interrupted install in ${backupRoot}. ` +
+        "They hold files of previous mod versions; restore or delete them by hand.",
+    );
   }
 
   private async rollbackInstall(
     kspRoot: string,
     installedFiles: readonly string[],
-    previousFiles: ReadonlyMap<string, Uint8Array>,
+    backup: InstallBackup,
   ): Promise<void> {
     let rollbackError: unknown;
     for (const relativePath of [...new Set(installedFiles)].sort((left, right) => right.length - left.length)) {
@@ -585,14 +698,10 @@ export class InstallService {
         rollbackError ??= error;
       }
     }
-    for (const [relativePath, data] of previousFiles) {
-      try {
-        const absolute = await this.resolveDestination(kspRoot, relativePath);
-        await mkdir(dirname(absolute), { recursive: true });
-        await writeFile(absolute, data);
-      } catch (error: unknown) {
-        rollbackError ??= error;
-      }
+    try {
+      await this.restoreBackup(kspRoot, backup);
+    } catch (error: unknown) {
+      rollbackError ??= error;
     }
     await this.pruneEmptyParents(kspRoot, installedFiles);
     if (rollbackError !== undefined) {
@@ -660,7 +769,66 @@ interface ModuleInstallSnapshot {
   installationPath: string;
   installedFiles: string[];
   previousRecord?: ManagedModRecord;
-  previousFiles: Map<string, Uint8Array>;
+  backup: InstallBackup;
+}
+
+interface InstallBackup {
+  /** Absolute folder holding the moved files under their relative paths. */
+  directory: string;
+  /** Relative paths that were moved and must go back on rollback. */
+  files: string[];
+}
+
+/** Hidden folder in the KSP root; KSP only loads GameData, so it is ignored. */
+const BACKUP_DIRECTORY = ".kraken-backup";
+
+/** Names this service gives downloads, including those of older versions. */
+const TEMPORARY_DOWNLOAD = /^[0-9a-f]{64}\.zip(\.[0-9a-f-]{36}\.(download|partial))?$/;
+
+function resolveBackupPath(backupDirectory: string, relativePath: string): string {
+  const segments = normalizeSlashPath(relativePath).split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new InstallPolicyError(`Unsafe backup path: ${relativePath}`, "INVALID_DESTINATION");
+  }
+  const resolved = resolve(backupDirectory, ...segments);
+  if (!containsPath(backupDirectory, resolved)) {
+    throw new InstallPolicyError(`Backup path escapes its folder: ${relativePath}`, "INVALID_DESTINATION");
+  }
+  return resolved;
+}
+
+/**
+ * Moves a file, copying when source and target are on different file
+ * systems. Returns false when the source does not exist.
+ */
+async function moveFile(source: string, target: string): Promise<boolean> {
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await rename(source, target);
+    return true;
+  } catch (error: unknown) {
+    if (isMissingFile(error)) {
+      return false;
+    }
+    if (!hasErrorCode(error, "EXDEV")) {
+      throw error;
+    }
+  }
+  await copyFile(source, target);
+  await rm(source, { force: true });
+  return true;
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+function isDirectoryNotEmpty(error: unknown): boolean {
+  return hasErrorCode(error, "ENOTEMPTY") || hasErrorCode(error, "EEXIST");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {

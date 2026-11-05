@@ -108,6 +108,19 @@ describe("ZipArchive", () => {
     await expect(extractAll(zip, path, await zip.listEntries(path))).rejects.toThrow(/GameData\/Mod\/a\.cfg/);
   });
 
+  it("reports a corrupt entry to a consumer that starts reading late", async () => {
+    const zip = new ZipArchive();
+    const path = await archiveFile(declareAllSizes(zipSync({ "GameData/Mod/a.cfg": encode("hello world") }), 1));
+
+    const result = zip.extractEntries(path, await zip.listEntries(path), async (_entry, source) => {
+      // Mimics a consumer that prepares the destination folder first.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await readAll(source);
+    });
+
+    await expect(result).rejects.toMatchObject({ name: "ZipArchiveError", code: "INVALID_ZIP" });
+  });
+
   it("fails loudly when a selected entry is not in the archive", async () => {
     const zip = new ZipArchive();
     const path = await archiveFile(zipSync({ "GameData/Mod/a.cfg": encode("abc") }));
