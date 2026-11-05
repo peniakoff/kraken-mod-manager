@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
 ### Changed
 - **New interface:** one visual system styled as a spacecraft cockpit, with a dark instrument-panel ground, readouts in a monospace face and one accent colour. Self-hosted Host Grotesk and JetBrains Mono fonts replace the system fallback.
 - Navigation moves to a sidebar with Overview, Installed and Browse mods. Installed mods get their own filterable table with Update and Uninstall in each row, so Browse mods now opens on the search.
@@ -18,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The dependency and provider-choice dialog works from the keyboard: focus moves into it, Tab stays inside (also past a group of provider options), Escape cancels without closing the details panel underneath, and focus returns to the Install button that opened it.
 - The service status light now shows only whether the local service answers. A failed operation (a blocked install plan, a rejected uninstall, a failed registry download) is reported in the error bar and no longer turns the light red. The light goes red when a request gets no response and green again once the service answers.
 - A failed save on the setup screen is shown as an alert and no longer hides the detected installations.
+
+### Known limitations
+- Binaries are still not code-signed, so Gatekeeper and Windows SmartScreen may warn on first launch.
+- Files backed up by an install that was interrupted (for example by closing Kraken mid-install) are not restored automatically; the log names the `.kraken-backup` folder to restore them from.
 
 ## [0.4.0] - 2026-11-05
 
