@@ -18,12 +18,13 @@ import {
 } from "@kraken/core";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
   InstallJournal,
   JOURNAL_FILE_NAME,
+  JOURNAL_STALE_MS,
   journalFileName,
   readInstallJournal,
   type ParsedInstallJournal,
@@ -826,10 +827,35 @@ export class InstallService {
     for (const module of journal.modules) {
       tracked.add(module.backupId);
     }
-    if (journal.pid !== process.pid && isProcessAlive(journal.pid)) {
+    // A live pid alone is not proof: pids get reused, so the journal must also
+    // have been touched recently by the owner's heartbeat.
+    let journalAgeMs: number;
+    try {
+      journalAgeMs = Date.now() - (await stat(journalPath)).mtimeMs;
+    } catch (error: unknown) {
+      reportFailure(`Could not inspect the install journal ${journalPath}: ${errorMessage(error)}`);
+      return;
+    }
+    if (
+      journal.pid !== undefined &&
+      journal.pid !== process.pid &&
+      isProcessAlive(journal.pid) &&
+      journalAgeMs < JOURNAL_STALE_MS
+    ) {
       reportFailure(
         `Kraken process ${journal.pid}, which started an unfinished install, is still running, so its journal ${journalPath} was left alone.`,
       );
+      return;
+    }
+
+    if (journal.modules.length === 0) {
+      try {
+        await rm(journalPath, { force: true });
+      } catch (error: unknown) {
+        reportFailure(`Could not remove the empty install journal ${journalPath}: ${errorMessage(error)}`);
+        return;
+      }
+      console.info(`Removed the empty install journal ${journalPath}.`);
       return;
     }
 

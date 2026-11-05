@@ -50,6 +50,11 @@ untrusted input: backup ids must be UUIDs and every path goes through the same
 allowed-root checks as an install, all before the first file is touched. A
 journal that fails these checks, or whose process is still running, is left in
 place with its backups and reported through `GET /api/v1/install-recovery`.
+A running job touches its journal every 30 seconds, and a journal counts as
+owned by a live process only if its pid is alive and the file was touched in
+the last two minutes, so a reused pid cannot protect a dead job's journal. A
+journal with no module (an empty file or just a header) has nothing to undo
+and is deleted.
 
 A job that ends in a running process, successfully or not, deletes its
 journal, so a pending journal always means the process died. Keeping one for a

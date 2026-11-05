@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1409,6 +1409,57 @@ describe("interrupted install recovery", () => {
     expect(installService.getRecoveryReport().failed).toEqual([
       { jobId: "0b1c2d3e-0000-4000-8000-000000000009", message: expect.stringContaining("still running") },
     ]);
+  });
+
+  it("removes an empty journal left by a crash while it was created", async () => {
+    const { installService, ksp } = await createInstallTestApp();
+    const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-00000000000b", []);
+    expect(readFileSync(journal, "utf8")).toBe("");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+    } finally {
+      info.mockRestore();
+    }
+
+    expect(existsSync(journal)).toBe(false);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+  });
+
+  it("removes a header-only journal of a process that is gone", async () => {
+    const { installService, ksp } = await createInstallTestApp();
+    const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-00000000000c", [JOURNAL_HEADER]);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+    } finally {
+      info.mockRestore();
+    }
+
+    expect(existsSync(journal)).toBe(false);
+    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+  });
+
+  it("recovers a journal whose process id is reused by another live process", async () => {
+    const { installService, ksp } = await createInstallTestApp();
+    const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-00000000000d", [
+      { ...JOURNAL_HEADER, pid: process.ppid },
+      { type: "module", identifier: "Mod", name: "Mod", backupId: "0b1c2d3e-0000-4000-8000-00000000000e", previousRecord: null },
+      { type: "file", path: "GameData/Mod/file.cfg" },
+    ]);
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(journal, tenMinutesAgo, tenMinutesAgo);
+    mkdirSync(join(ksp, "GameData", "Mod"), { recursive: true });
+    writeFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "left by the dead job");
+
+    await installService.cleanupTemporaryFiles(ksp);
+
+    expect(existsSync(join(ksp, "GameData", "Mod", "file.cfg"))).toBe(false);
+    expect(existsSync(journal)).toBe(false);
+    expect(installService.getRecoveryReport().rolledBack).toHaveLength(1);
   });
 
   it("keeps no journal after an install that fails and rolls back", async () => {
