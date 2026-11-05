@@ -840,6 +840,7 @@ export class InstallService {
       return;
     }
     const canonicalRoot = await this.fileSystem.realpath(kspPath);
+    this.recoveryReport.activeInstallationPath = canonicalRoot;
     const backupRoot = join(canonicalRoot, BACKUP_DIRECTORY);
     const tracked = new Set<string>();
     for (const name of await readDirectoryNames(backupRoot)) {
@@ -856,7 +857,11 @@ export class InstallService {
       await removeDirectoryIfEmpty(backupRoot);
       return;
     }
-    this.recoveryReport.untrackedBackups = { count: untracked.length, directory: backupRoot };
+    (this.recoveryReport.untrackedBackups ??= []).push({
+      installationPath: canonicalRoot,
+      count: untracked.length,
+      directory: backupRoot,
+    });
     console.warn(
       `Found ${untracked.length} backup folder(s) without an install journal in ${backupRoot}. ` +
         "Kraken cannot restore them automatically. They may hold the only copy of a previous mod version, " +
@@ -882,7 +887,7 @@ export class InstallService {
     recheckDelayMs: number,
   ): Promise<void> {
     const reportFailure = (message: string): void => {
-      this.recoveryReport.failed.push({ jobId, message });
+      this.recoveryReport.failed.push({ jobId, installationPath: canonicalRoot, message });
       console.warn(message);
     };
 
@@ -951,6 +956,7 @@ export class InstallService {
         await this.withManifestMutation(() => this.rollBackJournal(canonicalRoot, backupRoot, journal));
         this.recoveryReport.rolledBack.push({
           jobId,
+          installationPath: canonicalRoot,
           modules: journal.modules.map((module) => ({
             identifier: module.identifier,
             name: module.name,

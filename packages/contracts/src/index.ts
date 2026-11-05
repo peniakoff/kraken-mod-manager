@@ -400,22 +400,29 @@ export const installRecoveryReportSchema = z.object({
   rolledBack: z.array(
     z.object({
       jobId: z.string().min(1),
+      installationPath: z.string().min(1),
       modules: z.array(recoveredModuleSchema),
     }),
   ),
   failed: z.array(
     z.object({
-      jobId: z.string().min(1),
+      jobId: z.string().min(1).optional(),
+      installationPath: z.string().min(1),
       message: z.string().min(1),
     }),
   ),
   /** Backup folders with no usable journal (left by Kraken 0.5.0 or earlier, by a failed rollback, or by an unreadable journal). */
   untrackedBackups: z
-    .object({
-      count: z.number().int().positive(),
-      directory: z.string().min(1),
-    })
+    .array(
+      z.object({
+        installationPath: z.string().min(1),
+        count: z.number().int().positive(),
+        directory: z.string().min(1),
+      }),
+    )
     .optional(),
+  /** Canonical root of the installation that is active now, so a UI can tell which entries concern another one. */
+  activeInstallationPath: z.string().min(1).optional(),
 });
 
 export type InstallRecoveryReport = z.infer<typeof installRecoveryReportSchema>;

@@ -905,8 +905,15 @@ describe("App install recovery notice", () => {
         if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
         if (url === "/api/v1/install-recovery") {
           return json({
-            rolledBack: [{ jobId: "job-1", modules: [{ identifier: "MechJeb2", name: "MechJeb 2", restoredVersion: "2.14.0" }] }],
+            rolledBack: [
+              {
+                jobId: "job-1",
+                installationPath: "/games/KSP",
+                modules: [{ identifier: "MechJeb2", name: "MechJeb 2", restoredVersion: "2.14.0" }],
+              },
+            ],
             failed: [],
+            activeInstallationPath: "/games/KSP",
           });
         }
         if (url === "/api/v1/config") {

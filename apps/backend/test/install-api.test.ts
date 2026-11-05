@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1219,10 +1219,9 @@ describe("mod install API", () => {
       expect(readdirSync(downloads)).toEqual(["notes.txt"]);
       expect(readFileSync(join(backup, "file.cfg"), "utf8")).toBe("user data");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("without an install journal"));
-      expect(installService.getRecoveryReport().untrackedBackups).toEqual({
-        count: 1,
-        directory: join(ksp, ".kraken-backup"),
-      });
+      expect(installService.getRecoveryReport().untrackedBackups).toEqual([
+        { installationPath: realpathSync(ksp), count: 1, directory: join(ksp, ".kraken-backup") },
+      ]);
     } finally {
       warn.mockRestore();
     }
@@ -1290,7 +1289,7 @@ describe("interrupted install recovery", () => {
 
     const report = await request(app).get("/api/v1/install-recovery");
     expect(report.status).toBe(200);
-    expect(report.body).toEqual({ rolledBack: [], failed: [] });
+    expect(report.body).toEqual({ rolledBack: [], failed: [], activeInstallationPath: realpathSync(ksp) });
   });
 
   it("removes the files of an interrupted first install at the next start", async () => {
@@ -1307,8 +1306,11 @@ describe("interrupted install recovery", () => {
     expect(readManifestFile(home).mods).toEqual([]);
     const report = await request(restarted.app).get("/api/v1/install-recovery");
     expect(report.body).toEqual({
-      rolledBack: [{ jobId, modules: [{ identifier: "ExampleMod", name: "Example Mod" }] }],
+      rolledBack: [
+        { jobId, installationPath: realpathSync(ksp), modules: [{ identifier: "ExampleMod", name: "Example Mod" }] },
+      ],
       failed: [],
+      activeInstallationPath: realpathSync(ksp),
     });
   });
 
@@ -1336,7 +1338,11 @@ describe("interrupted install recovery", () => {
     expect(manifestRecord(home, "NoHashMod")).toEqual(recordBefore);
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
     expect(restarted.installService.getRecoveryReport().rolledBack).toEqual([
-      { jobId, modules: [{ identifier: "NoHashMod", name: "No Hash Mod", restoredVersion: "1.0.0" }] },
+      {
+        jobId,
+        installationPath: realpathSync(ksp),
+        modules: [{ identifier: "NoHashMod", name: "No Hash Mod", restoredVersion: "1.0.0" }],
+      },
     ]);
   });
 
@@ -1372,6 +1378,7 @@ describe("interrupted install recovery", () => {
     expect(restarted.installService.getRecoveryReport().rolledBack).toEqual([
       {
         jobId,
+        installationPath: realpathSync(ksp),
         modules: [
           { identifier: "ModuleManager", name: "Module Manager" },
           { identifier: "DependentMod", name: "Dependent Mod" },
@@ -1400,7 +1407,11 @@ describe("interrupted install recovery", () => {
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
     expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
     expect(manifestRecord(home, "ExampleMod")).toEqual(recordBefore);
-    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+    expect(installService.getRecoveryReport()).toEqual({
+      rolledBack: [],
+      failed: [],
+      activeInstallationPath: realpathSync(ksp),
+    });
   });
 
   it("leaves a journal it cannot read untouched and reports it", async () => {
@@ -1420,7 +1431,7 @@ describe("interrupted install recovery", () => {
     expect(readFileSync(journal, "utf8")).toBe("not json\n{}\n");
     expect(existsSync(join(backupRoot, "0b1c2d3e-0000-4000-8000-000000000005"))).toBe(true);
     expect(installService.getRecoveryReport().failed).toEqual([
-      { jobId: "0b1c2d3e-0000-4000-8000-000000000006", message: expect.stringContaining("journal") },
+      { jobId: "0b1c2d3e-0000-4000-8000-000000000006", installationPath: realpathSync(ksp), message: expect.stringContaining("journal") },
     ]);
   });
 
@@ -1468,7 +1479,7 @@ describe("interrupted install recovery", () => {
     expect(readFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "utf8")).toBe("being installed");
     expect(existsSync(journal)).toBe(true);
     expect(installService.getRecoveryReport().failed).toEqual([
-      { jobId: "0b1c2d3e-0000-4000-8000-000000000009", message: expect.stringContaining("still running") },
+      { jobId: "0b1c2d3e-0000-4000-8000-000000000009", installationPath: realpathSync(ksp), message: expect.stringContaining("still running") },
     ]);
   });
 
@@ -1487,7 +1498,11 @@ describe("interrupted install recovery", () => {
 
     expect(existsSync(journal)).toBe(false);
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
-    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+    expect(installService.getRecoveryReport()).toEqual({
+      rolledBack: [],
+      failed: [],
+      activeInstallationPath: realpathSync(ksp),
+    });
   });
 
   it("removes a header-only journal of a process that is gone", async () => {
@@ -1503,7 +1518,11 @@ describe("interrupted install recovery", () => {
     }
 
     expect(existsSync(journal)).toBe(false);
-    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+    expect(installService.getRecoveryReport()).toEqual({
+      rolledBack: [],
+      failed: [],
+      activeInstallationPath: realpathSync(ksp),
+    });
   });
 
   it("recovers a journal whose process id is reused by another live process", async () => {
@@ -1550,7 +1569,7 @@ describe("interrupted install recovery", () => {
     expect(readFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "utf8")).toBe("being installed");
     expect(existsSync(journal)).toBe(true);
     expect(installService.getRecoveryReport().failed).toEqual([
-      { jobId: "0b1c2d3e-0000-4000-8000-000000000010", message: expect.stringContaining("still running") },
+      { jobId: "0b1c2d3e-0000-4000-8000-000000000010", installationPath: realpathSync(ksp), message: expect.stringContaining("still running") },
     ]);
   });
 
@@ -1561,7 +1580,11 @@ describe("interrupted install recovery", () => {
     await installService.cleanupTemporaryFiles(ksp);
 
     expect(existsSync(journal)).toBe(true);
-    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+    expect(installService.getRecoveryReport()).toEqual({
+      rolledBack: [],
+      failed: [],
+      activeInstallationPath: realpathSync(ksp),
+    });
   });
 
   it("keeps no journal after an install that fails and rolls back", async () => {
