@@ -1019,6 +1019,49 @@ describe("App optional mods at install", () => {
     expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: true, optional: ["ModuleManager"] });
   });
 
+  it("opens the dialog for a metapackage with nothing missing and installs it with dependencies", async () => {
+    const bundle = { identifier: "Bundle", name: "Bundle", authors: ["someone"], version: "1.0.0", tags: [], kind: "metapackage" };
+    const bundleTarget = { identifier: "Bundle", name: "Bundle", version: "1.0.0" };
+    const installBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "ready", moduleCount: 1 });
+      if (url === "/api/v1/installed-mods") return json({ mods: [] });
+      if (url === "/api/v1/updates") return json({ updates: [] });
+      if (url === "/api/v1/mods/Bundle/plan") {
+        return json({ ...basePlan, target: bundleTarget, toInstall: [bundleTarget], optional: [] });
+      }
+      if (url === "/api/v1/mods/Bundle/install" && init?.method === "POST") {
+        installBodies.push(JSON.parse(String(init.body)));
+        return json(
+          { job: { jobId: "job-bundle", kind: "install", identifier: "Bundle", version: "1.0.0", status: "queued", phase: "queued" } },
+          202,
+        );
+      }
+      if (url.startsWith("/api/v1/mods")) return json({ total: 1, mods: [bundle] });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+    const wrapper = mount(App);
+
+    await clickInstall(wrapper);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Kraken will only record Bundle."));
+    expect(installBodies).toHaveLength(0);
+    await wrapper.get('[role="dialog"]').findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(installBodies).toHaveLength(1));
+    expect(installBodies[0]).toEqual({ version: "1.0.0", installDependencies: true });
+  });
+
   it("installs directly when every optional mod is unpicked", async () => {
     const { fetchMock, installBodies } = optionalFetch(false);
     vi.stubGlobal("fetch", fetchMock);

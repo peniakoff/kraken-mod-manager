@@ -3,6 +3,7 @@ import { computed } from "vue";
 import type { AvailableUpdate, CkanModule, InstalledMod } from "@kraken/contracts";
 import AppIcon from "./AppIcon.vue";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
+import { canInstall } from "../installable.js";
 
 const props = defineProps<{
   mods: CkanModule[];
@@ -59,7 +60,8 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
             {{ compatLabel(mod).text }}
           </span>
           <span v-for="tag in mod.tags.slice(0, 4)" :key="tag" class="badge">{{ tag }}</span>
-          <span v-if="formatDownloadSize(mod.downloadSize) !== undefined" class="readout px-1 text-[13px] text-muted">
+          <span v-if="mod.kind === 'metapackage'" class="badge" data-testid="metapackage-badge">Metapackage</span>
+          <span v-if="mod.kind !== 'metapackage' && formatDownloadSize(mod.downloadSize) !== undefined" class="readout px-1 text-[13px] text-muted">
             {{ formatDownloadSize(mod.downloadSize) }}
           </span>
           <span
@@ -86,7 +88,7 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
           Details
         </button>
         <button
-          v-if="mod.download !== undefined"
+          v-if="canInstall(mod)"
           class="btn btn-primary btn-sm"
           type="button"
           :aria-disabled="installingIdentifiers.includes(mod.identifier) ? 'true' : undefined"
