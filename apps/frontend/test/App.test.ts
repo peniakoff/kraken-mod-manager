@@ -750,3 +750,77 @@ describe("App", () => {
     });
   });
 });
+
+describe("App service status", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+
+  function serviceFetch(refresh: () => Promise<Response>) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/config") {
+        return json({
+          configured: true,
+          installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+        });
+      }
+      if (url === "/api/v1/registry") return json({ status: "missing", moduleCount: 0 });
+      if (url === "/api/v1/installed-mods") return json({ mods: [] });
+      if (url === "/api/v1/updates") return json({ updates: [] });
+      if (url === "/api/v1/registry/refresh") return refresh();
+      throw new Error(`unexpected request ${url}`);
+    });
+  }
+
+  function systems(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[aria-label="Systems"]').text();
+  }
+
+  async function clickRefresh(wrapper: ReturnType<typeof mount>) {
+    await wrapper.findAll("button").find((button) => button.text().includes("Refresh registry"))!.trigger("click");
+  }
+
+  it("reports a failed operation without marking the service as down", async () => {
+    vi.stubGlobal(
+      "fetch",
+      serviceFetch(async () => json({ code: "REGISTRY_DOWNLOAD_FAILED", message: "CKAN-meta download failed." }, 502)),
+    );
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(systems(wrapper)).toContain("Service connected (test-version)"));
+
+    await clickRefresh(wrapper);
+
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("CKAN-meta download failed."));
+    expect(systems(wrapper)).toContain("Service connected (test-version)");
+  });
+
+  it("marks the service as down when it stops answering, and up again when it answers", async () => {
+    let reachable = false;
+    vi.stubGlobal(
+      "fetch",
+      serviceFetch(async () => {
+        if (!reachable) {
+          throw new TypeError("Failed to fetch");
+        }
+        return json({ status: "ready", moduleCount: 1 });
+      }),
+    );
+    const wrapper = mount(App);
+    await vi.waitFor(() => expect(systems(wrapper)).toContain("Service connected (test-version)"));
+
+    await clickRefresh(wrapper);
+    await vi.waitFor(() => {
+      expect(systems(wrapper)).toContain("Local service is unavailable.");
+      expect(wrapper.find('[role="alert"]').text()).toContain("The local service is not responding.");
+    });
+
+    reachable = true;
+    await clickRefresh(wrapper);
+    await vi.waitFor(() => expect(systems(wrapper)).toContain("Service connected (test-version)"));
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+});

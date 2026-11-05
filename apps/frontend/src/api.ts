@@ -33,9 +33,37 @@ import {
   uninstallResponseSchema,
   updatesResponseSchema,
 } from "@kraken/contracts";
+import { readonly, ref } from "vue";
+
+/** Thrown when a request gets no HTTP response at all, i.e. the local service is not running. */
+export class ServiceUnreachableError extends Error {
+  constructor(cause: unknown) {
+    super("The local service is not responding.", { cause });
+    this.name = "ServiceUnreachableError";
+  }
+}
+
+const reachable = ref(true);
+
+/**
+ * Whether the last request reached the local service. Any HTTP response
+ * counts, errors included: a failed operation is not a dead service.
+ */
+export const serviceReachable = readonly(reachable);
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    const response = await fetch(path, init);
+    reachable.value = true;
+    return response;
+  } catch (error) {
+    reachable.value = false;
+    throw new ServiceUnreachableError(error);
+  }
+}
 
 export async function getHealth(): Promise<HealthResponse> {
-  const response = await fetch("/api/v1/health");
+  const response = await send("/api/v1/health");
 
   if (!response.ok) {
     throw new Error(`Health check failed with HTTP ${response.status}.`);
@@ -202,7 +230,7 @@ async function request<T>(
   schema: { parse(value: unknown): T },
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await send(path, init);
   const payload: unknown = await response.json();
 
   if (!response.ok) {
