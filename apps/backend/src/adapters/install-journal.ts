@@ -1,5 +1,5 @@
 import type { ManagedModRecord } from "@kraken/core";
-import { mkdir, open, readFile, rm, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readFile, rm, utimes, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isManagedModRecord } from "./install-manifest-store.js";
 
@@ -14,8 +14,12 @@ import { isManagedModRecord } from "./install-manifest-store.js";
  */
 export class InstallJournal {
   private handle: FileHandle | undefined;
+  private heartbeat: NodeJS.Timeout | undefined;
 
-  constructor(readonly path: string) {}
+  constructor(
+    readonly path: string,
+    private readonly heartbeatMs = JOURNAL_HEARTBEAT_MS,
+  ) {}
 
   /** Records a module before any of its files move; creates the file on first use. */
   async beginModule(module: JournalModuleStart): Promise<void> {
@@ -23,6 +27,7 @@ export class InstallJournal {
       await mkdir(dirname(this.path), { recursive: true });
       this.handle = await open(this.path, "wx", 0o600);
       await this.append({ type: "journal", schemaVersion: JOURNAL_SCHEMA_VERSION, pid: process.pid });
+      this.startHeartbeat();
     }
     await this.append({ type: "module", ...module });
     await this.handle.sync();
@@ -35,11 +40,16 @@ export class InstallJournal {
 
   /** Marks the whole job as done; from here on recovery only deletes backups. */
   async commit(): Promise<void> {
+    if (this.handle === undefined) {
+      return;
+    }
     await this.append({ type: "committed" });
-    await this.handle?.sync();
+    await this.handle.sync();
   }
 
   async close(): Promise<void> {
+    clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
     const handle = this.handle;
     this.handle = undefined;
     await handle?.close();
@@ -50,6 +60,20 @@ export class InstallJournal {
     await rm(this.path, { force: true });
   }
 
+  /**
+   * Recovery treats a journal with a live pid as foreign only while its mtime
+   * is fresh, so a reused pid cannot shield a dead job's journal forever.
+   */
+  private startHeartbeat(): void {
+    this.heartbeat = setInterval(() => {
+      const now = new Date();
+      utimes(this.path, now, now).catch((error: unknown) => {
+        console.warn(`Could not refresh the install journal ${this.path}: ${errorMessage(error)}`);
+      });
+    }, this.heartbeatMs);
+    this.heartbeat.unref();
+  }
+
   private async append(line: JournalLine): Promise<void> {
     if (this.handle === undefined) {
       throw new InstallJournalError(`Install journal ${this.path} is not open.`);
@@ -58,6 +82,11 @@ export class InstallJournal {
     await this.handle.appendFile(`${JSON.stringify(line)}\n`, "utf8");
   }
 }
+
+export const JOURNAL_HEARTBEAT_MS = 30_000;
+
+/** A journal untouched for this long is not owned by a running job, whatever its pid says. */
+export const JOURNAL_STALE_MS = 120_000;
 
 export interface JournalModuleStart {
   identifier: string;
@@ -74,7 +103,8 @@ export interface JournalModule extends JournalModuleStart {
 }
 
 export interface ParsedInstallJournal {
-  pid: number;
+  /** Absent when the crash came before the header was written. */
+  pid?: number;
   committed: boolean;
   modules: JournalModule[];
 }
@@ -116,7 +146,10 @@ export function parseInstallJournal(contents: string, path: string): ParsedInsta
 
   const malformed = (index: number, reason: string): InstallJournalError =>
     new InstallJournalError(`Install journal ${path} is malformed at line ${index + 1}: ${reason}`);
-  const parsed: ParsedInstallJournal = { pid: 0, committed: false, modules: [] };
+  if (lines.length === 0) {
+    return { committed: false, modules: [] };
+  }
+  const parsed: ParsedInstallJournal = { committed: false, modules: [] };
 
   for (const [index, text] of lines.entries()) {
     let line: unknown;
@@ -137,7 +170,7 @@ export function parseInstallJournal(contents: string, path: string): ParsedInsta
       if (typeof entry.pid !== "number" || !Number.isInteger(entry.pid) || entry.pid <= 0) {
         throw malformed(index, "missing process id");
       }
-      parsed.pid = Number(entry.pid);
+      parsed.pid = entry.pid;
       continue;
     }
     if (parsed.committed) {
@@ -178,9 +211,6 @@ export function parseInstallJournal(contents: string, path: string): ParsedInsta
       default:
         throw malformed(index, "unknown entry type");
     }
-  }
-  if (lines.length === 0) {
-    throw new InstallJournalError(`Install journal ${path} has no header.`);
   }
   return parsed;
 }

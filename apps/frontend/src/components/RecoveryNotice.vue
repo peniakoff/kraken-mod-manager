@@ -54,10 +54,11 @@ const backupLabel = computed(() => {
         <div v-if="report.untrackedBackups !== undefined" class="flex items-start gap-3" role="status">
           <AppIcon name="folder" :size="18" class="mt-0.5 shrink-0 text-warn" />
           <div class="min-w-0">
-            <p class="font-medium text-ink">Backups from an earlier version</p>
+            <p class="font-medium text-ink">Backups Kraken cannot restore</p>
             <p class="mt-1 text-muted">
-              Found {{ backupLabel }} left by an interrupted install in an earlier version of Kraken. They hold
-              files of previous mod versions; restore or delete them by hand:
+              Found {{ backupLabel }} that Kraken has no record of how to restore, for example from an interrupted
+              install in Kraken 0.5.0 or earlier or from a rollback that failed. They may hold the only copy of a
+              previous mod version, so check them before deleting anything:
             </p>
             <p class="mt-1 text-ink"><PathText :path="report.untrackedBackups.directory" /></p>
           </div>

@@ -18,12 +18,15 @@ import {
 } from "@kraken/core";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   InstallJournal,
   JOURNAL_FILE_NAME,
+  JOURNAL_HEARTBEAT_MS,
+  JOURNAL_STALE_MS,
   journalFileName,
   readInstallJournal,
   type ParsedInstallJournal,
@@ -751,9 +754,13 @@ export class InstallService {
    * undoes installs a previous run never finished, using their journals.
    * Backups without a journal (from versions before 0.6.0) can hold the only
    * copy of a previous mod version, so they are only reported. Must not run
-   * while an install is active.
+   * while an install is active. `recheckDelayMs` is how long to wait before
+   * trusting a stale heartbeat of a live process; tests shorten it.
    */
-  async cleanupTemporaryFiles(kspPath?: string): Promise<void> {
+  async cleanupTemporaryFiles(
+    kspPath?: string,
+    { recheckDelayMs = JOURNAL_HEARTBEAT_MS + 5_000 }: { recheckDelayMs?: number } = {},
+  ): Promise<void> {
     let names: string[] = [];
     try {
       names = await readdir(this.downloadCacheDirectory);
@@ -777,7 +784,7 @@ export class InstallService {
     for (const name of await readDirectoryNames(backupRoot)) {
       const jobId = JOURNAL_FILE_NAME.exec(name)?.[1];
       if (jobId !== undefined) {
-        await this.recoverJob(canonicalRoot, jobId, join(backupRoot, name), tracked);
+        await this.recoverJob(canonicalRoot, jobId, join(backupRoot, name), tracked, recheckDelayMs);
       }
     }
 
@@ -790,8 +797,9 @@ export class InstallService {
     }
     this.recoveryReport.untrackedBackups = { count: untracked.length, directory: backupRoot };
     console.warn(
-      `Found ${untracked.length} backup(s) from an interrupted install in ${backupRoot}. ` +
-        "They hold files of previous mod versions; restore or delete them by hand.",
+      `Found ${untracked.length} backup folder(s) without an install journal in ${backupRoot}. ` +
+        "Kraken cannot restore them automatically. They may hold the only copy of a previous mod version, " +
+        "so check them before deleting anything.",
     );
   }
 
@@ -810,6 +818,7 @@ export class InstallService {
     jobId: string,
     journalPath: string,
     tracked: Set<string>,
+    recheckDelayMs: number,
   ): Promise<void> {
     const reportFailure = (message: string): void => {
       this.recoveryReport.failed.push({ jobId, message });
@@ -826,10 +835,48 @@ export class InstallService {
     for (const module of journal.modules) {
       tracked.add(module.backupId);
     }
-    if (journal.pid !== process.pid && isProcessAlive(journal.pid)) {
+    // A live pid alone is not proof: pids get reused, so the journal must also
+    // have been touched recently by the owner's heartbeat.
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(journalPath)).mtimeMs;
+    } catch (error: unknown) {
+      reportFailure(`Could not inspect the install journal ${journalPath}: ${errorMessage(error)}`);
+      return;
+    }
+    const isFresh = Date.now() - mtimeMs < JOURNAL_STALE_MS;
+    const ownerAlive = journal.pid !== undefined && journal.pid !== process.pid && isProcessAlive(journal.pid);
+    let stillRunning = ownerAlive && isFresh;
+    if (ownerAlive && !isFresh) {
+      // A suspended machine stops the owner's timers, so its heartbeat can be
+      // late while the mtime already looks old. Give it one more beat.
+      await delay(recheckDelayMs);
+      try {
+        stillRunning = (await stat(journalPath)).mtimeMs !== mtimeMs;
+      } catch (error: unknown) {
+        reportFailure(`Could not inspect the install journal ${journalPath}: ${errorMessage(error)}`);
+        return;
+      }
+    }
+    if (stillRunning) {
       reportFailure(
         `Kraken process ${journal.pid}, which started an unfinished install, is still running, so its journal ${journalPath} was left alone.`,
       );
+      return;
+    }
+
+    if (journal.modules.length === 0) {
+      // A fresh file may be a journal being created right now.
+      if (isFresh) {
+        return;
+      }
+      try {
+        await rm(journalPath, { force: true });
+      } catch (error: unknown) {
+        reportFailure(`Could not remove the empty install journal ${journalPath}: ${errorMessage(error)}`);
+        return;
+      }
+      console.info(`Removed the empty install journal ${journalPath}.`);
       return;
     }
 

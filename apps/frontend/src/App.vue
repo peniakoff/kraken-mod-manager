@@ -119,18 +119,21 @@ async function loadSetup(): Promise<void> {
   status.value = "checking";
   errorMessage.value = undefined;
 
+  let config: Awaited<ReturnType<typeof getConfig>>;
   try {
     version.value = (await getHealth()).version;
+    // Without a readable config the setup picker would offer to overwrite it.
+    config = await getConfig();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "The local service is unavailable.";
     status.value = "unavailable";
     return;
   }
 
-  // The service answered, so a failure from here on (an unreadable registry
-  // cache, for example) is an error to report, not a dead service.
+  // The service answered and the config is known, so a failure from here on
+  // (an unreadable registry cache, for example) is an error to report, not a
+  // dead service.
   try {
-    const config = await getConfig();
     if (config.configured) {
       installation.value = config.installation;
       candidates.value = [];
@@ -349,7 +352,7 @@ async function onInstall(mod: CkanModule): Promise<void> {
 }
 
 /** Optional mods offered for one install, carried across re-plans. */
-type OptionalState = Pick<DependencyPrompt, "offered" | "selected" | "confirmed">;
+type OptionalState = Pick<DependencyPrompt, "offered" | "selected" | "confirmed" | "seen">;
 
 async function planAndApply(mod: CkanModule, choices: Record<string, string>, optional: OptionalState = {}): Promise<void> {
   try {
@@ -389,9 +392,16 @@ async function applyPlan(
   const confirmed = optional.confirmed === true;
 
   const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
-  if (plan.status === "choice-required" || (!confirmed && (missing.length > 0 || offered.length > 0))) {
+  const planned = plan.toInstall.map((entry) => entry.identifier);
+  // After the optional mods are confirmed, dependencies the user was never
+  // shown (brought in by the picked mods) need their own confirmation.
+  const unseen = confirmed
+    ? missing.filter((entry) => !(optional.seen ?? []).includes(entry.identifier) && !selected.includes(entry.identifier))
+    : [];
+  if (plan.status === "choice-required" || (!confirmed && (missing.length > 0 || offered.length > 0)) || unseen.length > 0) {
     setInstallPending(mod.identifier, false);
-    dependencyPrompt.value = { mod, plan, choices, offered, selected, confirmed };
+    const seen = confirmed && plan.status === "choice-required" ? (optional.seen ?? []) : planned;
+    dependencyPrompt.value = { mod, plan, choices, offered, selected, confirmed, seen };
     // The dependency dialog lives in the browse view; an update started from
     // the overview or the installed list has to switch there to be seen.
     activeView.value = "browse";
@@ -419,6 +429,11 @@ async function confirmDependencyInstall(picked: string[]): Promise<void> {
     return;
   }
   dependencyPrompt.value = undefined;
+  if (prompt.confirmed === true) {
+    // The user has now seen every mod in this plan.
+    await startInstallJob(prompt.mod, true, prompt.choices, prompt.selected ?? []);
+    return;
+  }
   if (picked.length === 0) {
     const missing = prompt.plan.toInstall.some((entry) => entry.identifier !== prompt.mod.identifier);
     await startInstallJob(prompt.mod, missing, prompt.choices);
@@ -432,6 +447,7 @@ async function confirmDependencyInstall(picked: string[]): Promise<void> {
     ...(prompt.offered === undefined ? {} : { offered: prompt.offered }),
     selected: picked,
     confirmed: true,
+    seen: prompt.seen ?? prompt.plan.toInstall.map((entry) => entry.identifier),
   });
 }
 

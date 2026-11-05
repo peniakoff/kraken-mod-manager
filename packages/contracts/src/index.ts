@@ -408,7 +408,7 @@ export const installRecoveryReportSchema = z.object({
       message: z.string().min(1),
     }),
   ),
-  /** Backups from versions before 0.6.0, which have no journal to undo them with. */
+  /** Backup folders with no usable journal (left by Kraken 0.5.0 or earlier, by a failed rollback, or by an unreadable journal). */
   untrackedBackups: z
     .object({
       count: z.number().int().positive(),
