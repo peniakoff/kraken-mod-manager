@@ -106,4 +106,25 @@ describe("DependencyPromptDialog optional mods", () => {
 
     expect(wrapper.get('label[for="optional-Toolbar"]').text()).toContain("for SCANsat Lib");
   });
+
+  it("asks to confirm mods that picked optional mods bring in", async () => {
+    const lib = { identifier: "ModuleManagerLib", name: "MM Lib", version: "1.0.0" };
+    const manager = { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" };
+    const wrapper = mount(DependencyPromptDialog, {
+      props: {
+        prompt: prompt({
+          confirmed: true,
+          selected: ["ModuleManager"],
+          plan: { ...prompt().plan, toInstall: [lib, manager, target] },
+        }),
+      },
+    });
+
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
+    expect(wrapper.get("h2").text()).toBe("Install these mods too?");
+    expect(wrapper.text()).toContain("SCANsat and the mods you picked need:");
+    expect(wrapper.text()).toContain("MM Lib");
+    await wrapper.findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+    expect(wrapper.emitted("confirm")).toEqual([[["ModuleManager"]]]);
+  });
 });

@@ -13,6 +13,8 @@ export type DependencyPrompt = {
   selected?: string[];
   /** True once the user has confirmed the optional mods; the dialog then only asks for choices. */
   confirmed?: boolean;
+  /** Identifiers from the plan's install list that the user has already been shown. */
+  seen?: string[];
 };
 
 const props = defineProps<{ prompt: DependencyPrompt }>();
@@ -134,11 +136,17 @@ useModalFocus({ container: containerRef, onEscape: () => emit("cancel") });
     </div>
     <div v-else ref="containerRef" class="dialog">
       <template v-if="missingDependencies.length > 0">
-        <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install required dependencies?</h2>
-        <p class="mt-2 text-muted">
-          {{ prompt.mod.name }} requires
-          {{ missingDependencies.map((entry) => entry.name).join(", ") }}. Install them automatically?
-        </p>
+        <template v-if="prompt.confirmed === true">
+          <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install these mods too?</h2>
+          <p class="mt-2 text-muted">{{ prompt.mod.name }} and the mods you picked need:</p>
+        </template>
+        <template v-else>
+          <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install required dependencies?</h2>
+          <p class="mt-2 text-muted">
+            {{ prompt.mod.name }} requires
+            {{ missingDependencies.map((entry) => entry.name).join(", ") }}. Install them automatically?
+          </p>
+        </template>
         <ul class="mt-4 divide-y divide-line rounded-md border border-line text-sm">
           <li v-for="entry in missingDependencies" :key="entry.identifier" class="flex justify-between gap-3 px-3 py-2">
             <span>{{ entry.name }}</span>
@@ -151,7 +159,7 @@ useModalFocus({ container: containerRef, onEscape: () => emit("cancel") });
         <p class="mt-2 text-muted">Other mods work well with it. Pick any to install at the same time.</p>
       </template>
 
-      <div v-if="optionalGroups.length > 0" class="mt-5 max-h-[45vh] space-y-4 overflow-y-auto pr-1">
+      <div v-if="prompt.confirmed !== true && optionalGroups.length > 0" class="mt-5 max-h-[45vh] space-y-4 overflow-y-auto pr-1">
         <fieldset v-for="group in optionalGroups" :key="group.kind" class="rounded-md border border-line p-4">
           <legend class="px-1 text-sm font-medium">{{ group.legend }}</legend>
           <div class="mt-1 space-y-1">
@@ -181,7 +189,7 @@ useModalFocus({ container: containerRef, onEscape: () => emit("cancel") });
 
       <div class="mt-6 flex flex-wrap gap-3">
         <button class="btn btn-primary" type="button" @click="emit('confirm', [...pickedOptional])">
-          {{ missingDependencies.length > 0 ? "Install automatically" : "Install" }}
+          {{ missingDependencies.length > 0 && prompt.confirmed !== true ? "Install automatically" : "Install" }}
         </button>
         <button class="btn btn-secondary" type="button" @click="emit('cancel')">Cancel</button>
       </div>

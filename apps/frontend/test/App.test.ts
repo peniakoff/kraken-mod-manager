@@ -949,7 +949,9 @@ describe("App optional mods at install", () => {
   const moduleManager = { identifier: "ModuleManager", name: "Module Manager", version: "4.2.3" };
   const basePlan = { status: "ok", target, alreadySatisfied: [], conflicts: [], unmet: [], choices: [] };
 
-  function optionalFetch(installed: boolean) {
+  const moduleManagerLib = { identifier: "ModuleManagerLib", name: "Module Manager Lib", version: "1.0.0" };
+
+  function optionalFetch(installed: boolean, pickedBringsLib = false) {
     const planBodies: unknown[] = [];
     const installBodies: unknown[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -973,7 +975,9 @@ describe("App optional mods at install", () => {
         const picked = body.optional ?? [];
         return json({
           ...basePlan,
-          toInstall: picked.includes("ModuleManager") ? [moduleManager, target] : [target],
+          toInstall: picked.includes("ModuleManager")
+            ? [...(pickedBringsLib ? [moduleManagerLib] : []), moduleManager, target]
+            : [target],
           optional: picked.includes("ModuleManager")
             ? []
             : [{ kind: "recommends", name: "ModuleManager", requiredBy: "Scansat", module: moduleManager }],
@@ -1042,5 +1046,24 @@ describe("App optional mods at install", () => {
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
     expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: false });
   });
-});
 
+  it("shows dependencies of picked optional mods before installing them", async () => {
+    const { fetchMock, planBodies, installBodies } = optionalFetch(false, true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
+    const wrapper = mount(App);
+
+    await clickInstall(wrapper);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Install SCANsat?"));
+    await wrapper.get('[role="dialog"]').findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain("Install these mods too?"));
+    expect(wrapper.get('[role="dialog"]').text()).toContain("Module Manager Lib");
+    expect(installBodies).toEqual([]);
+    await wrapper.get('[role="dialog"]').findAll("button").find((button) => button.text() === "Install")!.trigger("click");
+
+    await vi.waitFor(() => expect(installBodies).toHaveLength(1));
+    expect(installBodies[0]).toEqual({ version: "20.4", installDependencies: true, optional: ["ModuleManager"] });
+    expect(planBodies).toHaveLength(2);
+  });
+});
