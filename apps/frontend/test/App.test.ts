@@ -808,6 +808,43 @@ describe("App service status", () => {
     expect(systems(wrapper)).toContain("Service connected (test-version)");
   });
 
+  it("keeps the service light green when the registry cache cannot be read at startup", async () => {
+    let cacheBroken = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+        if (url === "/api/v1/config") {
+          return json({
+            configured: true,
+            installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+          });
+        }
+        if (url === "/api/v1/registry" && cacheBroken) {
+          return json({ code: "REGISTRY_CACHE_ERROR", message: "Registry cache is malformed." }, 500);
+        }
+        if (url === "/api/v1/registry/refresh") {
+          cacheBroken = false;
+          return json({ status: "ready", moduleCount: 1 });
+        }
+        if (url === "/api/v1/installed-mods") return json({ mods: [] });
+        if (url === "/api/v1/updates") return json({ updates: [] });
+        if (url.startsWith("/api/v1/mods")) return json({ total: 0, mods: [] });
+        throw new Error(`unexpected request ${url}`);
+      }),
+    );
+    const wrapper = mount(App);
+
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("Registry cache is malformed."));
+    expect(systems(wrapper)).toContain("Service connected (test-version)");
+
+    await clickRefresh(wrapper);
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').exists()).toBe(false));
+    expect(systems(wrapper)).toContain("Service connected (test-version)");
+  });
+
   it("marks the service as down when it stops answering, and up again when it answers", async () => {
     let reachable = false;
     vi.stubGlobal(

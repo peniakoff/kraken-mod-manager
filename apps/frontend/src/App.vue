@@ -120,8 +120,16 @@ async function loadSetup(): Promise<void> {
   errorMessage.value = undefined;
 
   try {
-    const health = await getHealth();
-    version.value = health.version;
+    version.value = (await getHealth()).version;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "The local service is unavailable.";
+    status.value = "unavailable";
+    return;
+  }
+
+  // The service answered, so a failure from here on (an unreadable registry
+  // cache, for example) is an error to report, not a dead service.
+  try {
     const config = await getConfig();
     if (config.configured) {
       installation.value = config.installation;
@@ -140,10 +148,10 @@ async function loadSetup(): Promise<void> {
       selectedMod.value = undefined;
       selectedModVersions.value = [];
     }
-    status.value = "ready";
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "The local service is unavailable.";
-    status.value = "unavailable";
+    reportError(error, "The installation could not be loaded.");
+  } finally {
+    status.value = "ready";
   }
 }
 
