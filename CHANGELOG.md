@@ -7,19 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
 ### Added
 - Installing a mod offers its recommended and suggested mods, as CKAN does: recommendations start picked, suggestions unpicked. Picked mods are installed in the same job with their own dependencies and count as installed by hand, so uninstalling the first mod does not offer to remove them. Updates and reinstalls do not offer them again.
 
 ### Fixed
 - Mods whose metadata lists several download URLs (CKAN spec v1.34 mirrors, for example GitHub and SpaceDock) can be installed again; they had no Install button. Kraken tries the URLs in order, moves on when a download fails or the file does not match its hash, and reports every attempt if none works. Download URLs other than http and https are ignored. The registry cache format changes, so refresh the registry once after updating.
 - An install that was interrupted (for example by closing Kraken or a crash mid-install) is undone at the next start: files it had written are removed, the previous version is moved back from `.kraken-backup` and the install record is restored, including for every dependency installed in the same job. The app shows what was undone; anything that could not be undone stays in place and is reported.
-
 - "Refresh registry" repairs a registry cache that cannot be read (damaged, or written by a newer Kraken). Before, one failed read was remembered until Kraken restarted, and refreshing needed a readable cache first, so the only way out was to delete the file by hand.
 - An error while loading the installation (such as an unreadable registry cache) no longer marks the local service as unavailable; it is shown in the error bar while the status light stays green.
 
 ### Security
 - The standalone binaries now embed Node.js 24.22.2 instead of 24.18.0, which picks up two Node security releases.
 - Updated dependencies, including express 5.3 (fixes in `body-parser`, `qs` and `proxy-addr`), express-rate-limit 8.7 (`ip-address`), zod 4.6 and Vue 3.5.44, plus the build and test tooling (Vite 8.3, Vitest 5, jsdom 30). Dependency installs now skip releases younger than seven days.
+
+### Known limitations
+- Binaries are still not code-signed, so Gatekeeper and Windows SmartScreen may warn on first launch.
+- Backups left by an interrupted install in Kraken 0.5.0 or earlier have no journal, so they are reported but not restored automatically.
+- Metapackages (CKAN modules without a download of their own) cannot be installed yet. Recommendations that name a virtual package with several providers, or an `any_of` group, are not offered.
+- Going back to 0.5.0 after running 0.6.0: the older version cannot read the new registry cache and cannot rebuild it either. Close Kraken, delete `registry.json` from the Kraken cache folder, start it again and refresh the registry.
 
 ## [0.5.0] - 2026-11-05
 
