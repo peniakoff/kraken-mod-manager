@@ -103,6 +103,7 @@ export class InstallService {
     identifier: string,
     version?: string,
     choices?: Readonly<Record<string, string>>,
+    optional?: readonly string[],
   ): Promise<InstallPlanResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
@@ -112,6 +113,7 @@ export class InstallService {
       registryModules: this.registryService.listModules(),
       inventory,
       ...(choices !== undefined ? { choices } : {}),
+      ...(optional !== undefined ? { optional } : {}),
     });
   }
 
@@ -121,15 +123,26 @@ export class InstallService {
     version?: string,
     installDependencies = false,
     choices?: Readonly<Record<string, string>>,
+    optional: readonly string[] = [],
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
-    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, installDependencies, choices);
+    // Picked optional mods need the resolver, so they imply dependency resolution.
+    const modulesToInstall = await this.resolveModulesForInstall(
+      kspPath,
+      target,
+      installDependencies || optional.length > 0,
+      choices,
+      optional,
+    );
 
     const job = this.jobStore.create(identifier, version);
-    void this.runInstall(job.jobId, kspPath, target, modulesToInstall);
+    // The user chose the target and each optional mod by name, so none of them
+    // is offered for orphan cleanup later.
+    const manualIdentifiers = new Set([target.identifier, ...optional]);
+    void this.runInstall(job.jobId, kspPath, target, modulesToInstall, manualIdentifiers);
     return this.jobStore.toResponse(job);
   }
 
@@ -254,6 +267,7 @@ export class InstallService {
     kspPath: string,
     target: CkanModule,
     modulesToInstall: readonly CkanModule[],
+    manualIdentifiers: ReadonlySet<string>,
   ): Promise<void> {
     const completed: ModuleInstallSnapshot[] = [];
     let journal: InstallJournal | undefined;
@@ -267,8 +281,8 @@ export class InstallService {
           modulesToInstall.length > 1
             ? ` (${index + 1}/${modulesToInstall.length}: ${module.identifier})`
             : "";
-        const isTarget = module.identifier === target.identifier;
-        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isTarget, journal);
+        const isManual = manualIdentifiers.has(module.identifier);
+        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isManual, journal);
         completed.push(snapshot);
       }
       await journal.commit();
@@ -357,6 +371,7 @@ export class InstallService {
     target: CkanModule,
     installDependencies: boolean,
     choices: Readonly<Record<string, string>> | undefined,
+    optional: readonly string[],
   ): Promise<CkanModule[]> {
     if (!installDependencies) {
       if (target.download === undefined || target.download.length === 0) {
@@ -371,6 +386,7 @@ export class InstallService {
       registryModules: this.registryService.listModules(),
       inventory,
       ...(choices !== undefined ? { choices } : {}),
+      optional,
     });
     if (plan.status === "choice-required") {
       throw new InstallServiceError(
@@ -408,7 +424,7 @@ export class InstallService {
     kspPath: string,
     module: CkanModule,
     stepLabel: string,
-    isTarget: boolean,
+    isManual: boolean,
     journal: InstallJournal,
   ): Promise<ModuleInstallSnapshot> {
     if (module.download === undefined || module.download.length === 0) {
@@ -429,7 +445,7 @@ export class InstallService {
     // and it is deleted once this module is installed or has failed.
     const downloadPath = `${resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version)}.${globalThis.crypto.randomUUID()}.download`;
     try {
-      return await this.installFromDownload(jobId, kspPath, module, stepLabel, isTarget, downloadPath, journal);
+      return await this.installFromDownload(jobId, kspPath, module, stepLabel, isManual, downloadPath, journal);
     } finally {
       await rm(downloadPath, { force: true });
     }
@@ -440,7 +456,7 @@ export class InstallService {
     kspPath: string,
     module: CkanModule,
     stepLabel: string,
-    isTarget: boolean,
+    isManual: boolean,
     downloadPath: string,
     journal: InstallJournal,
   ): Promise<ModuleInstallSnapshot> {
@@ -544,7 +560,7 @@ export class InstallService {
           files: installedFiles,
           // A reinstall or update keeps the flag, so updating an auto-installed
           // dependency does not turn it into a manual install.
-          autoInstalled: previous?.autoInstalled ?? !isTarget,
+          autoInstalled: previous?.autoInstalled ?? !isManual,
         };
         const nextMods = manifest.mods.filter(
           (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
