@@ -6,10 +6,14 @@ export interface InstallJob extends JobResponse {
   listeners: Set<JobListener>;
 }
 
+/** Finished jobs kept for status lookups; older ones are dropped so memory stays bounded. */
+export const MAX_FINISHED_JOBS = 50;
+
 export class JobStore {
   private readonly jobs = new Map<string, InstallJob>();
 
   create(identifier: string, version?: string): InstallJob {
+    this.pruneFinishedJobs();
     const jobId = globalThis.crypto.randomUUID();
     const job: InstallJob = {
       jobId,
@@ -29,6 +33,14 @@ export class JobStore {
   /** True while any job is queued or running. */
   hasActiveJobs(): boolean {
     return [...this.jobs.values()].some((job) => job.status === "queued" || job.status === "running");
+  }
+
+  /** Drops the oldest finished jobs beyond the cap; Map order is creation order. */
+  private pruneFinishedJobs(): void {
+    const finished = [...this.jobs.values()].filter((job) => job.status === "succeeded" || job.status === "failed");
+    for (const job of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED_JOBS))) {
+      this.jobs.delete(job.jobId);
+    }
   }
 
   get(jobId: string): InstallJob | undefined {
