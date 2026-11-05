@@ -1,4 +1,4 @@
-import type { InstallPlanResponse, JobProgressEvent, JobResponse } from "@kraken/contracts";
+import type { InstallPlanResponse, InstallRecoveryReport, JobProgressEvent, JobResponse } from "@kraken/contracts";
 import {
   buildInventory,
   InstallPolicyError,
@@ -19,8 +19,15 @@ import {
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { copyFile, mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
+import {
+  InstallJournal,
+  JOURNAL_FILE_NAME,
+  journalFileName,
+  readInstallJournal,
+  type ParsedInstallJournal,
+} from "./adapters/install-journal.js";
 import {
   InstallManifestError,
   InstallManifestStore,
@@ -54,6 +61,7 @@ export class InstallServiceError extends Error {
 
 export class InstallService {
   private manifestMutation: Promise<void> = Promise.resolve();
+  private recoveryReport: InstallRecoveryReport = { rolledBack: [], failed: [] };
 
   constructor(
     private readonly fileSystem: FileSystemPort,
@@ -248,8 +256,11 @@ export class InstallService {
     modulesToInstall: readonly CkanModule[],
   ): Promise<void> {
     const completed: ModuleInstallSnapshot[] = [];
+    let journal: InstallJournal | undefined;
     try {
       this.jobStore.update(jobId, { status: "running", phase: "downloading", message: "Resolving module metadata." });
+      const canonicalRoot = await this.fileSystem.realpath(kspPath);
+      journal = new InstallJournal(join(canonicalRoot, BACKUP_DIRECTORY, journalFileName(jobId)));
 
       for (const [index, module] of modulesToInstall.entries()) {
         const stepLabel =
@@ -257,41 +268,69 @@ export class InstallService {
             ? ` (${index + 1}/${modulesToInstall.length}: ${module.identifier})`
             : "";
         const isTarget = module.identifier === target.identifier;
-        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isTarget);
+        const snapshot = await this.installSingleModule(jobId, kspPath, module, stepLabel, isTarget, journal);
         completed.push(snapshot);
       }
-      await this.discardBackups(completed);
-
-      this.jobStore.update(jobId, {
-        status: "succeeded",
-        phase: "done",
-        message: "Install completed.",
-        version: target.version,
-      });
+      await journal.commit();
     } catch (error: unknown) {
-      if (completed.length > 0) {
-        try {
-          await this.rollbackCompletedModules(kspPath, completed);
-        } catch (rollbackError: unknown) {
-          const message = error instanceof Error ? error.message : "Install failed.";
-          const rollbackMessage =
-            rollbackError instanceof Error ? rollbackError.message : "Job rollback failed.";
-          this.jobStore.update(jobId, {
-            status: "failed",
-            phase: "failed",
-            error: `${message} Rollback also failed: ${rollbackMessage}`,
-            message: `${message} Rollback also failed: ${rollbackMessage}`,
-          });
-          return;
-        }
-      }
-      const message = error instanceof Error ? error.message : "Install failed.";
-      this.jobStore.update(jobId, {
-        status: "failed",
-        phase: "failed",
-        error: message,
-        message,
+      await this.failInstall(jobId, kspPath, completed, journal, error);
+      return;
+    }
+
+    // The install is complete from here on; cleanup problems never undo it.
+    if (await this.discardBackups(completed)) {
+      await this.deleteJournal(journal);
+    } else {
+      // The committed journal lets the next start finish deleting the backups.
+      await journal.close().catch((error: unknown) => {
+        console.warn(`Could not close install journal ${journal?.path}: ${errorMessage(error)}`);
       });
+    }
+    this.jobStore.update(jobId, {
+      status: "succeeded",
+      phase: "done",
+      message: "Install completed.",
+      version: target.version,
+    });
+  }
+
+  private async failInstall(
+    jobId: string,
+    kspPath: string,
+    completed: readonly ModuleInstallSnapshot[],
+    journal: InstallJournal | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const installError = error instanceof ModuleRollbackError ? error.installError : error;
+    let rollbackError = error instanceof ModuleRollbackError ? error.rollbackError : undefined;
+    if (completed.length > 0) {
+      try {
+        await this.rollbackCompletedModules(kspPath, completed);
+      } catch (completedRollbackError: unknown) {
+        rollbackError ??= completedRollbackError;
+      }
+    }
+    // A journal is kept only for a job the process never finished. One left by
+    // a finished job would undo a later install of the same mod at the next start.
+    await this.deleteJournal(journal);
+
+    const message = installError instanceof Error ? installError.message : "Install failed.";
+    const fullMessage =
+      rollbackError === undefined
+        ? message
+        : `${message} Rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : "Job rollback failed."}`;
+    this.jobStore.update(jobId, { status: "failed", phase: "failed", error: fullMessage, message: fullMessage });
+  }
+
+  private async deleteJournal(journal: InstallJournal | undefined): Promise<void> {
+    if (journal === undefined) {
+      return;
+    }
+    try {
+      await journal.remove();
+      await removeDirectoryIfEmpty(dirname(journal.path));
+    } catch (error: unknown) {
+      console.warn(`Could not delete install journal ${journal.path}: ${errorMessage(error)}`);
     }
   }
 
@@ -300,14 +339,17 @@ export class InstallService {
    * failure rolls earlier ones back. A backup that cannot be deleted does not
    * fail a finished install; it is reported and found again at startup.
    */
-  private async discardBackups(completed: readonly ModuleInstallSnapshot[]): Promise<void> {
+  private async discardBackups(completed: readonly ModuleInstallSnapshot[]): Promise<boolean> {
+    let allDeleted = true;
     for (const snapshot of completed) {
       try {
         await this.discardBackup(snapshot.installationPath, snapshot.backup);
       } catch (error: unknown) {
+        allDeleted = false;
         console.warn(`Could not delete install backup ${snapshot.backup.directory}: ${errorMessage(error)}`);
       }
     }
+    return allDeleted;
   }
 
   private async resolveModulesForInstall(
@@ -367,6 +409,7 @@ export class InstallService {
     module: CkanModule,
     stepLabel: string,
     isTarget: boolean,
+    journal: InstallJournal,
   ): Promise<ModuleInstallSnapshot> {
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
@@ -386,7 +429,7 @@ export class InstallService {
     // and it is deleted once this module is installed or has failed.
     const downloadPath = `${resolveDownloadCachePath(this.downloadCacheDirectory, module.identifier, module.version)}.${globalThis.crypto.randomUUID()}.download`;
     try {
-      return await this.installFromDownload(jobId, kspPath, module, stepLabel, isTarget, downloadPath);
+      return await this.installFromDownload(jobId, kspPath, module, stepLabel, isTarget, downloadPath, journal);
     } finally {
       await rm(downloadPath, { force: true });
     }
@@ -399,6 +442,7 @@ export class InstallService {
     stepLabel: string,
     isTarget: boolean,
     downloadPath: string,
+    journal: InstallJournal,
   ): Promise<ModuleInstallSnapshot> {
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
@@ -456,8 +500,16 @@ export class InstallService {
       }
 
       // The previous version moves out of the way instead of being read into
-      // memory; it comes back if anything below fails.
-      const backup = await this.backUpFiles(canonicalRoot, previous?.files ?? []);
+      // memory; it comes back if anything below fails, or at the next start
+      // if the process dies first.
+      const backupId = globalThis.crypto.randomUUID();
+      await journal.beginModule({
+        identifier: module.identifier,
+        name: module.name,
+        backupId,
+        previousRecord: previousRecord ?? null,
+      });
+      const backup = await this.backUpFiles(canonicalRoot, previous?.files ?? [], backupId);
       const installedFiles: string[] = [];
 
       try {
@@ -468,12 +520,14 @@ export class InstallService {
           }
           const firstDestination = await this.resolveDestination(canonicalRoot, first);
           installedFiles.push(first);
+          await journal.recordFile(first);
           await mkdir(dirname(firstDestination), { recursive: true });
           await pipeline(source, createWriteStream(firstDestination));
           // The entry stream can be read once; further mappings copy the file.
           for (const relativeDestination of copies) {
             const absoluteDestination = await this.resolveDestination(canonicalRoot, relativeDestination);
             installedFiles.push(relativeDestination);
+            await journal.recordFile(relativeDestination);
             await mkdir(dirname(absoluteDestination), { recursive: true });
             await copyFile(firstDestination, absoluteDestination);
           }
@@ -505,7 +559,11 @@ export class InstallService {
           backup,
         };
       } catch (error: unknown) {
-        await this.rollbackInstall(canonicalRoot, installedFiles, backup);
+        try {
+          await this.rollbackInstall(canonicalRoot, installedFiles, backup);
+        } catch (rollbackError: unknown) {
+          throw new ModuleRollbackError(error, rollbackError);
+        }
         throw error;
       }
     });
@@ -588,9 +646,9 @@ export class InstallService {
    * Files already missing are skipped. If a move fails, the files moved so
    * far go back before the error propagates.
    */
-  private async backUpFiles(kspRoot: string, files: readonly string[]): Promise<InstallBackup> {
+  private async backUpFiles(kspRoot: string, files: readonly string[], backupId: string): Promise<InstallBackup> {
     const backup: InstallBackup = {
-      directory: join(kspRoot, BACKUP_DIRECTORY, globalThis.crypto.randomUUID()),
+      directory: join(kspRoot, BACKUP_DIRECTORY, backupId),
       files: [],
     };
     try {
@@ -630,22 +688,16 @@ export class InstallService {
   /** Deletes a backup folder, and the backup root once nothing else is in it. */
   private async discardBackup(kspRoot: string, backup: InstallBackup): Promise<void> {
     await rm(backup.directory, { recursive: true, force: true });
-    const backupRoot = join(kspRoot, BACKUP_DIRECTORY);
-    try {
-      await rmdir(backupRoot);
-    } catch (error: unknown) {
-      // Another job's backup still lives there, or the root is already gone.
-      if (!isMissingFile(error) && !isDirectoryNotEmpty(error)) {
-        throw error;
-      }
-    }
+    // Another job's backup or journal may still live there.
+    await removeDirectoryIfEmpty(join(kspRoot, BACKUP_DIRECTORY));
   }
 
   /**
    * Startup housekeeping: deletes leftover downloads from earlier runs and
-   * reports backups left by an interrupted install. Those backups can hold
-   * the only copy of a previous mod version, so they are never deleted
-   * automatically. Must not run while an install is active.
+   * undoes installs a previous run never finished, using their journals.
+   * Backups without a journal (from versions before 0.6.0) can hold the only
+   * copy of a previous mod version, so they are only reported. Must not run
+   * while an install is active.
    */
   async cleanupTemporaryFiles(kspPath?: string): Promise<void> {
     let names: string[] = [];
@@ -665,24 +717,139 @@ export class InstallService {
     if (kspPath === undefined) {
       return;
     }
-    const backupRoot = join(await this.fileSystem.realpath(kspPath), BACKUP_DIRECTORY);
-    let backups: string[];
-    try {
-      backups = await readdir(backupRoot);
-    } catch (error: unknown) {
-      if (isMissingFile(error)) {
-        return;
+    const canonicalRoot = await this.fileSystem.realpath(kspPath);
+    const backupRoot = join(canonicalRoot, BACKUP_DIRECTORY);
+    const tracked = new Set<string>();
+    for (const name of await readDirectoryNames(backupRoot)) {
+      const jobId = JOURNAL_FILE_NAME.exec(name)?.[1];
+      if (jobId !== undefined) {
+        await this.recoverJob(canonicalRoot, jobId, join(backupRoot, name), tracked);
       }
-      throw error;
     }
-    if (backups.length === 0) {
-      await rmdir(backupRoot);
+
+    const untracked = (await readDirectoryNames(backupRoot)).filter(
+      (name) => !tracked.has(name) && !JOURNAL_FILE_NAME.test(name),
+    );
+    if (untracked.length === 0) {
+      await removeDirectoryIfEmpty(backupRoot);
       return;
     }
+    this.recoveryReport.untrackedBackups = { count: untracked.length, directory: backupRoot };
     console.warn(
-      `Found ${backups.length} backup(s) from an interrupted install in ${backupRoot}. ` +
+      `Found ${untracked.length} backup(s) from an interrupted install in ${backupRoot}. ` +
         "They hold files of previous mod versions; restore or delete them by hand.",
     );
+  }
+
+  /** What the last startup cleanup did with interrupted installs. */
+  getRecoveryReport(): InstallRecoveryReport {
+    return structuredClone(this.recoveryReport);
+  }
+
+  /**
+   * Undoes one interrupted job, or finishes deleting the backups of one that
+   * had committed. A journal that cannot be read or applied stays in place
+   * with its backups, so nothing is lost and the next start tries again.
+   */
+  private async recoverJob(
+    canonicalRoot: string,
+    jobId: string,
+    journalPath: string,
+    tracked: Set<string>,
+  ): Promise<void> {
+    const reportFailure = (message: string): void => {
+      this.recoveryReport.failed.push({ jobId, message });
+      console.warn(message);
+    };
+
+    let journal: ParsedInstallJournal;
+    try {
+      journal = await readInstallJournal(journalPath);
+    } catch (error: unknown) {
+      reportFailure(errorMessage(error));
+      return;
+    }
+    for (const module of journal.modules) {
+      tracked.add(module.backupId);
+    }
+    if (journal.pid !== process.pid && isProcessAlive(journal.pid)) {
+      reportFailure(
+        `Kraken process ${journal.pid}, which started an unfinished install, is still running, so its journal ${journalPath} was left alone.`,
+      );
+      return;
+    }
+
+    try {
+      const backupRoot = dirname(journalPath);
+      if (journal.committed) {
+        for (const module of journal.modules) {
+          await rm(join(backupRoot, module.backupId), { recursive: true, force: true });
+        }
+      } else {
+        await this.withManifestMutation(() => this.rollBackJournal(canonicalRoot, backupRoot, journal));
+        this.recoveryReport.rolledBack.push({
+          jobId,
+          modules: journal.modules.map((module) => ({
+            identifier: module.identifier,
+            name: module.name,
+            ...(module.previousRecord === null ? {} : { restoredVersion: module.previousRecord.version }),
+          })),
+        });
+      }
+      await rm(journalPath, { force: true });
+    } catch (error: unknown) {
+      reportFailure(
+        `Could not undo the interrupted install recorded in ${journalPath}: ${errorMessage(error)} Its backups were kept.`,
+      );
+    }
+  }
+
+  /**
+   * Validates every path in the journal before touching a file, then undoes
+   * the modules newest first: deletes what the job wrote, moves the backup
+   * back and restores the manifest record.
+   */
+  private async rollBackJournal(
+    canonicalRoot: string,
+    backupRoot: string,
+    journal: ParsedInstallJournal,
+  ): Promise<void> {
+    const steps: Array<{ files: string[]; backup: InstallBackup; identifier: string; previous: ManagedModRecord | null }> =
+      [];
+    for (const module of journal.modules) {
+      if (module.previousRecord !== null && module.previousRecord.installationPath !== canonicalRoot) {
+        throw new InstallServiceError(
+          `The journal entry for ${module.identifier} belongs to another installation.`,
+          "INSTALL_FAILED",
+        );
+      }
+      const files = [...new Set(module.files)];
+      for (const file of files) {
+        await this.resolveDestination(canonicalRoot, file);
+      }
+      const directory = join(backupRoot, module.backupId);
+      const backedUp = await listFilesRecursively(directory);
+      for (const file of backedUp) {
+        await this.resolveDestination(canonicalRoot, file);
+        resolveBackupPath(directory, file);
+      }
+      steps.push({
+        files,
+        backup: { directory, files: backedUp },
+        identifier: module.identifier,
+        previous: module.previousRecord,
+      });
+    }
+
+    let manifest = await this.manifestStore.read();
+    for (const step of steps.reverse()) {
+      await this.rollbackInstall(canonicalRoot, step.files, step.backup);
+      const others = manifest.mods.filter(
+        (mod) => mod.identifier !== step.identifier || mod.installationPath !== canonicalRoot,
+      );
+      manifest = { schemaVersion: 2, mods: step.previous === null ? others : [...others, step.previous] };
+      await this.manifestStore.write(manifest);
+    }
   }
 
   private async rollbackInstall(
@@ -825,6 +992,64 @@ function hasErrorCode(error: unknown, code: string): boolean {
 
 function isDirectoryNotEmpty(error: unknown): boolean {
   return hasErrorCode(error, "ENOTEMPTY") || hasErrorCode(error, "EEXIST");
+}
+
+/** Removes a directory if nothing is left in it; a missing directory is fine. */
+async function removeDirectoryIfEmpty(directory: string): Promise<void> {
+  try {
+    await rmdir(directory);
+  } catch (error: unknown) {
+    if (!isMissingFile(error) && !isDirectoryNotEmpty(error)) {
+      throw error;
+    }
+  }
+}
+
+async function readDirectoryNames(directory: string): Promise<string[]> {
+  try {
+    return await readdir(directory);
+  } catch (error: unknown) {
+    if (isMissingFile(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/** Files under `directory` as slash-separated relative paths; none when it is missing. */
+async function listFilesRecursively(directory: string): Promise<string[]> {
+  try {
+    const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(sep).join("/"));
+  } catch (error: unknown) {
+    if (isMissingFile(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/** Signal 0 only checks that the process exists; EPERM means it exists under another user. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return hasErrorCode(error, "EPERM");
+  }
+}
+
+/** A module failed and putting its previous version back failed too. */
+class ModuleRollbackError extends Error {
+  constructor(
+    readonly installError: unknown,
+    readonly rollbackError: unknown,
+  ) {
+    super(errorMessage(installError));
+    this.name = "ModuleRollbackError";
+  }
 }
 
 function errorMessage(error: unknown): string {

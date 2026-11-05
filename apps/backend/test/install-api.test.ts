@@ -13,12 +13,13 @@ import { NodeFileSystem } from "../src/adapters/node-file-system.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
-import { ZipArchive } from "../src/adapters/zip-archive.js";
+import { ZipArchive, type ZipEntryInfo } from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
 import { InstallService } from "../src/install-service.js";
 import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
+import type { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 
 function fixtureModZip(folder = "ExampleMod"): Uint8Array {
@@ -202,6 +203,49 @@ interface InstallTestOptions {
   holdDownload?: { url: string; until: Promise<void> };
   /** Archives served for NoHashMod, one per download; the last one repeats. */
   noHashArchives?: Uint8Array[];
+  /** Replaces the ZIP adapter, for example to simulate a crash. */
+  zip?: ZipArchive;
+}
+
+/**
+ * Simulates the process dying in the middle of an install: the given
+ * extraction call (1-based) writes `afterEntries` files and then never
+ * finishes, so nothing after that point runs.
+ */
+class CrashingZip extends ZipArchive {
+  private calls = 0;
+  private signalCrash: () => void = () => undefined;
+  readonly crashed = new Promise<void>((resolve) => {
+    this.signalCrash = resolve;
+  });
+
+  constructor(
+    private readonly crashOnCall: number,
+    private readonly afterEntries: number,
+  ) {
+    super();
+  }
+
+  override async extractEntries(
+    archivePath: string,
+    entries: readonly ZipEntryInfo[],
+    onEntry: (entry: ZipEntryInfo, source: Readable) => Promise<void>,
+  ): Promise<void> {
+    this.calls += 1;
+    if (this.calls !== this.crashOnCall) {
+      return super.extractEntries(archivePath, entries, onEntry);
+    }
+    let written = 0;
+    return super.extractEntries(archivePath, entries, async (entry, source) => {
+      if (written === this.afterEntries) {
+        source.resume();
+        this.signalCrash();
+        await new Promise<never>(() => undefined);
+      }
+      await onEntry(entry, source);
+      written += 1;
+    });
+  }
 }
 
 /** Overwrites the uncompressed size of the central directory record at `index`. */
@@ -284,35 +328,48 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
   });
 
   const platform: PlatformPort = { platform: "linux", homeDirectory: home, environment: {} };
-  const registryService = new RegistryService(
-    http,
-    new TarGzArchive(),
-    new RegistryCacheStore(join(home, "cache", "registry.json")),
-    "https://example.test/CKAN-meta.tar.gz",
-  );
-  const installService = new InstallService(
-    new NodeFileSystem(),
-    registryService,
-    streamingHttp,
-    new ZipArchive(),
-    new InstallManifestStore(join(home, "data", "install-manifest.json")),
-    new JobStore(),
-    join(home, "cache", "downloads"),
-  );
 
-  const app = createApp("test", {
-    fileSystem: new NodeFileSystem(),
-    platform,
-    configStore: new ConfigStore(join(home, "config", "config.json")),
-    directoryBrowser: new DirectoryBrowser([home]),
-    registryService,
-    installService,
-  });
+  // A second call builds a fresh process over the same files, as after a restart.
+  function start(zip: ZipArchive) {
+    const registryService = new RegistryService(
+      http,
+      new TarGzArchive(),
+      new RegistryCacheStore(join(home, "cache", "registry.json")),
+      "https://example.test/CKAN-meta.tar.gz",
+    );
+    const installService = new InstallService(
+      new NodeFileSystem(),
+      registryService,
+      streamingHttp,
+      zip,
+      new InstallManifestStore(join(home, "data", "install-manifest.json")),
+      new JobStore(),
+      join(home, "cache", "downloads"),
+    );
+    const app = createApp("test", {
+      fileSystem: new NodeFileSystem(),
+      platform,
+      configStore: new ConfigStore(join(home, "config", "config.json")),
+      directoryBrowser: new DirectoryBrowser([home]),
+      registryService,
+      installService,
+    });
+    return { app, installService };
+  }
 
+  const { app, installService } = start(testOptions.zip ?? new ZipArchive());
   await request(app).put("/api/v1/config").send({ installationPath: ksp });
   await request(app).post("/api/v1/registry/refresh");
 
-  return { app, home, ksp, installService, downloads: join(home, "cache", "downloads"), sha256: exampleHash.sha256 };
+  return {
+    app,
+    home,
+    ksp,
+    installService,
+    restart: () => start(new ZipArchive()),
+    downloads: join(home, "cache", "downloads"),
+    sha256: exampleHash.sha256,
+  };
 }
 
 async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
@@ -335,7 +392,7 @@ async function installWithDependencies(app: ReturnType<typeof createApp>, identi
 
 interface StoredManifestFile {
   schemaVersion: number;
-  mods: Array<{ identifier: string; installationPath: string; autoInstalled?: boolean }>;
+  mods: Array<{ identifier: string; version?: string; installationPath: string; autoInstalled?: boolean }>;
 }
 
 function readManifestFile(home: string): StoredManifestFile {
@@ -985,6 +1042,10 @@ describe("mod install API", () => {
       expect(readdirSync(downloads)).toEqual(["notes.txt"]);
       expect(readFileSync(join(backup, "file.cfg"), "utf8")).toBe("user data");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(".kraken-backup"));
+      expect(installService.getRecoveryReport().untrackedBackups).toEqual({
+        count: 1,
+        directory: join(ksp, ".kraken-backup"),
+      });
     } finally {
       warn.mockRestore();
     }
@@ -1014,5 +1075,228 @@ describe("mod install API", () => {
         availableVersion: "1.0.0",
       },
     ]);
+  });
+});
+
+async function startCrashingInstall(
+  app: ReturnType<typeof createApp>,
+  zip: CrashingZip,
+  identifier: string,
+  body: object = {},
+): Promise<string> {
+  const accepted = await request(app).post(`/api/v1/mods/${identifier}/install`).send(body);
+  expect(accepted.status).toBe(202);
+  await zip.crashed;
+  return accepted.body.job.jobId;
+}
+
+function writeJournal(ksp: string, jobId: string, lines: readonly object[]): string {
+  const backupRoot = join(ksp, ".kraken-backup");
+  mkdirSync(backupRoot, { recursive: true });
+  const path = join(backupRoot, `job-${jobId}.jsonl`);
+  writeFileSync(path, lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
+  return path;
+}
+
+// A process id that cannot exist, so the journal reads as left by a dead process.
+const JOURNAL_HEADER = { type: "journal", schemaVersion: 1, pid: 99_999_999 };
+
+describe("interrupted install recovery", () => {
+  it("reports nothing when no install was interrupted", async () => {
+    const { app, installService, ksp } = await createInstallTestApp();
+    await installService.cleanupTemporaryFiles(ksp);
+
+    const report = await request(app).get("/api/v1/install-recovery");
+    expect(report.status).toBe(200);
+    expect(report.body).toEqual({ rolledBack: [], failed: [] });
+  });
+
+  it("removes the files of an interrupted first install at the next start", async () => {
+    const zip = new CrashingZip(1, 1);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    const jobId = await startCrashingInstall(app, zip, "ExampleMod");
+    expect(readdirSync(join(ksp, "GameData", "ExampleMod"))).toHaveLength(1);
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles(ksp);
+
+    expect(existsSync(join(ksp, "GameData", "ExampleMod"))).toBe(false);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(readManifestFile(home).mods).toEqual([]);
+    const report = await request(restarted.app).get("/api/v1/install-recovery");
+    expect(report.body).toEqual({
+      rolledBack: [{ jobId, modules: [{ identifier: "ExampleMod", name: "Example Mod" }] }],
+      failed: [],
+    });
+  });
+
+  it("brings back the previous version after an interrupted update", async () => {
+    const zip = new CrashingZip(2, 1);
+    const second = zipSync({
+      "GameData/NoHashMod/readme.txt": new TextEncoder().encode("version two\n"),
+      "GameData/NoHashMod/plugin.dll": new TextEncoder().encode("new-dll"),
+    });
+    const { app, home, ksp, restart } = await createInstallTestApp({
+      zip,
+      noHashArchives: [fixtureModZip("NoHashMod"), second],
+    });
+    const first = await request(app).post("/api/v1/mods/NoHashMod/install").send({});
+    expect((await waitForJob(app, first.body.job.jobId)).status).toBe("succeeded");
+    writeFileSync(join(ksp, "GameData", "NoHashMod", "readme.txt"), "edited by the user");
+    const recordBefore = manifestRecord(home, "NoHashMod");
+
+    const jobId = await startCrashingInstall(app, zip, "NoHashMod");
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles(ksp);
+
+    expect(readFileSync(join(ksp, "GameData", "NoHashMod", "readme.txt"), "utf8")).toBe("edited by the user");
+    expect(readFileSync(join(ksp, "GameData", "NoHashMod", "plugin.dll"), "utf8")).toBe("fake-dll");
+    expect(manifestRecord(home, "NoHashMod")).toEqual(recordBefore);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(restarted.installService.getRecoveryReport().rolledBack).toEqual([
+      { jobId, modules: [{ identifier: "NoHashMod", name: "No Hash Mod", restoredVersion: "1.0.0" }] },
+    ]);
+  });
+
+  it("restores moved files when the interruption came before any new file was written", async () => {
+    const zip = new CrashingZip(2, 0);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    const first = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    expect((await waitForJob(app, first.body.job.jobId)).status).toBe("succeeded");
+    const recordBefore = manifestRecord(home, "ExampleMod");
+
+    await startCrashingInstall(app, zip, "ExampleMod");
+    expect(existsSync(join(ksp, "GameData", "ExampleMod", "readme.txt"))).toBe(false);
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles(ksp);
+
+    expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
+    expect(readFileSync(join(ksp, "GameData", "ExampleMod", "plugin.dll"), "utf8")).toBe("fake-dll");
+    expect(manifestRecord(home, "ExampleMod")).toEqual(recordBefore);
+  });
+
+  it("rolls back every module of an interrupted dependency install", async () => {
+    const zip = new CrashingZip(2, 1);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    const jobId = await startCrashingInstall(app, zip, "DependentMod", { installDependencies: true });
+    expect(manifestRecord(home, "ModuleManager").version).toBe("4.2.3");
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles(ksp);
+
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
+    expect(existsSync(join(ksp, "GameData", "DependentMod"))).toBe(false);
+    expect(readManifestFile(home).mods).toEqual([]);
+    expect(restarted.installService.getRecoveryReport().rolledBack).toEqual([
+      {
+        jobId,
+        modules: [
+          { identifier: "ModuleManager", name: "Module Manager" },
+          { identifier: "DependentMod", name: "Dependent Mod" },
+        ],
+      },
+    ]);
+  });
+
+  it("finishes the cleanup of an install that had already completed", async () => {
+    const { app, installService, ksp, home } = await createInstallTestApp();
+    const installed = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    expect((await waitForJob(app, installed.body.job.jobId)).status).toBe("succeeded");
+    const backupId = "0b1c2d3e-0000-4000-8000-000000000003";
+    mkdirSync(join(ksp, ".kraken-backup", backupId, "GameData", "ExampleMod"), { recursive: true });
+    writeFileSync(join(ksp, ".kraken-backup", backupId, "GameData", "ExampleMod", "readme.txt"), "old version");
+    writeJournal(ksp, "0b1c2d3e-0000-4000-8000-000000000004", [
+      JOURNAL_HEADER,
+      { type: "module", identifier: "ExampleMod", name: "Example Mod", backupId, previousRecord: null },
+      { type: "file", path: "GameData/ExampleMod/readme.txt" },
+      { type: "committed" },
+    ]);
+    const recordBefore = manifestRecord(home, "ExampleMod");
+
+    await installService.cleanupTemporaryFiles(ksp);
+
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
+    expect(manifestRecord(home, "ExampleMod")).toEqual(recordBefore);
+    expect(installService.getRecoveryReport()).toEqual({ rolledBack: [], failed: [] });
+  });
+
+  it("leaves a journal it cannot read untouched and reports it", async () => {
+    const { installService, ksp } = await createInstallTestApp();
+    const backupRoot = join(ksp, ".kraken-backup");
+    mkdirSync(join(backupRoot, "0b1c2d3e-0000-4000-8000-000000000005"), { recursive: true });
+    const journal = join(backupRoot, "job-0b1c2d3e-0000-4000-8000-000000000006.jsonl");
+    writeFileSync(journal, "not json\n{}\n");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(readFileSync(journal, "utf8")).toBe("not json\n{}\n");
+    expect(existsSync(join(backupRoot, "0b1c2d3e-0000-4000-8000-000000000005"))).toBe(true);
+    expect(installService.getRecoveryReport().failed).toEqual([
+      { jobId: "0b1c2d3e-0000-4000-8000-000000000006", message: expect.stringContaining("journal") },
+    ]);
+  });
+
+  it.each([
+    ["a file path outside the allowed roots", "../outside.txt", "0b1c2d3e-0000-4000-8000-000000000007"],
+    ["a backup folder outside the backup root", "GameData/Mod/file.cfg", "../../outside"],
+  ])("refuses a journal with %s", async (_label, filePath, backupId) => {
+    const { installService, ksp, home } = await createInstallTestApp();
+    writeFileSync(join(home, "outside.txt"), "keep me");
+    const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-000000000008", [
+      JOURNAL_HEADER,
+      { type: "module", identifier: "Mod", name: "Mod", backupId, previousRecord: null },
+      { type: "file", path: filePath },
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(readFileSync(join(home, "outside.txt"), "utf8")).toBe("keep me");
+    expect(existsSync(journal)).toBe(true);
+    expect(installService.getRecoveryReport().failed).toHaveLength(1);
+  });
+
+  it("leaves the journal of a Kraken process that is still running alone", async () => {
+    const { installService, ksp } = await createInstallTestApp();
+    const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-000000000009", [
+      { ...JOURNAL_HEADER, pid: process.ppid },
+      { type: "module", identifier: "Mod", name: "Mod", backupId: "0b1c2d3e-0000-4000-8000-00000000000a", previousRecord: null },
+      { type: "file", path: "GameData/Mod/file.cfg" },
+    ]);
+    mkdirSync(join(ksp, "GameData", "Mod"), { recursive: true });
+    writeFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "being installed");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(readFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "utf8")).toBe("being installed");
+    expect(existsSync(journal)).toBe(true);
+    expect(installService.getRecoveryReport().failed).toEqual([
+      { jobId: "0b1c2d3e-0000-4000-8000-000000000009", message: expect.stringContaining("still running") },
+    ]);
+  });
+
+  it("keeps no journal after an install that fails and rolls back", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const accepted = await request(app)
+      .post("/api/v1/mods/BrokenDependent/install")
+      .send({ installDependencies: true });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("failed");
+
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
   });
 });

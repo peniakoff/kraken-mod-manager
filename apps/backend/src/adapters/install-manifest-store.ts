@@ -96,7 +96,7 @@ function isInstallManifestV1(value: unknown): value is { schemaVersion: 1; mods:
   return manifest.schemaVersion === 1 && Array.isArray(manifest.mods) && manifest.mods.every(isManagedModRecordV1);
 }
 
-function isManagedModRecord(value: unknown): value is ManagedModRecord {
+export function isManagedModRecord(value: unknown): value is ManagedModRecord {
   return (
     isManagedModRecordV1(value) &&
     // Safe: isManagedModRecordV1 established a non-null object.
