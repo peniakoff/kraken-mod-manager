@@ -791,8 +791,9 @@ export class InstallService {
     }
     this.recoveryReport.untrackedBackups = { count: untracked.length, directory: backupRoot };
     console.warn(
-      `Found ${untracked.length} backup(s) from an interrupted install in ${backupRoot}. ` +
-        "They hold files of previous mod versions; restore or delete them by hand.",
+      `Found ${untracked.length} backup folder(s) without an install journal in ${backupRoot}. ` +
+        "Kraken cannot restore them automatically. They may hold the only copy of a previous mod version, " +
+        "so check them before deleting anything.",
     );
   }
 

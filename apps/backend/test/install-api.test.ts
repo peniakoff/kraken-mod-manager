@@ -1162,7 +1162,7 @@ describe("mod install API", () => {
 
       expect(readdirSync(downloads)).toEqual(["notes.txt"]);
       expect(readFileSync(join(backup, "file.cfg"), "utf8")).toBe("user data");
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining(".kraken-backup"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("without an install journal"));
       expect(installService.getRecoveryReport().untrackedBackups).toEqual({
         count: 1,
         directory: join(ksp, ".kraken-backup"),

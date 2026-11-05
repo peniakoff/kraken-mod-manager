@@ -45,13 +45,16 @@ describe("RecoveryNotice", () => {
     expect(alert.text()).toContain("Install journal is malformed.");
   });
 
-  it("points to backups left by an earlier version", () => {
+  it("points to backups Kraken cannot restore", () => {
     const wrapper = mount(RecoveryNotice, {
       props: { report: { ...empty, untrackedBackups: { count: 2, directory: "/games/KSP/.kraken-backup" } } },
     });
 
+    expect(wrapper.text()).toContain("Backups Kraken cannot restore");
     expect(wrapper.text()).toContain("2 backup folders");
+    expect(wrapper.text()).toContain("check them before deleting anything");
     expect(wrapper.text()).toContain("/games/KSP/.kraken-backup");
+    expect(wrapper.text()).not.toContain("restore or delete them by hand");
   });
 
   it("emits dismiss from the close button", async () => {

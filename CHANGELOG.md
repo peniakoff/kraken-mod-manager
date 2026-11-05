@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 - Binaries are still not code-signed, so Gatekeeper and Windows SmartScreen may warn on first launch.
-- Backups left by an interrupted install in Kraken 0.5.0 or earlier have no journal, so they are reported but not restored automatically.
+- Backups without a usable journal (from Kraken 0.5.0 or earlier, or from a rollback that failed) are reported but not restored automatically.
+- Interrupted installs are undone only for the installation that is active when Kraken starts.
 - Metapackages (CKAN modules without a download of their own) cannot be installed yet. Recommendations that name a virtual package with several providers, or an `any_of` group, are not offered.
 - Going back to 0.5.0 after running 0.6.0: the older version cannot read the new registry cache and cannot rebuild it either. Close Kraken, delete `registry.json` from the Kraken cache folder, start it again and refresh the registry.
 
