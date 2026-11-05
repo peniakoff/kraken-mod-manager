@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,6 +108,18 @@ function fixtureMetaArchive(
       }),
     },
     {
+      // No download_hash, so a corrupt archive reaches extraction.
+      path: "CKAN-meta-master/NoHashMod/NoHashMod-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "NoHashMod",
+        name: "No Hash Mod",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/NoHashMod.zip",
+      }),
+    },
+    {
       path: "CKAN-meta-master/AnotherMod/AnotherMod-1.0.0.ckan",
       content: JSON.stringify({
         identifier: "AnotherMod",
@@ -188,6 +200,25 @@ function fixtureMetaArchive(
 interface InstallTestOptions {
   /** Delays the response for one download URL until the promise settles. */
   holdDownload?: { url: string; until: Promise<void> };
+  /** Archives served for NoHashMod, one per download; the last one repeats. */
+  noHashArchives?: Uint8Array[];
+}
+
+/** Overwrites the uncompressed size of the central directory record at `index`. */
+function declareEntrySize(archive: Uint8Array, index: number, size: number): Uint8Array {
+  const copy = archive.slice();
+  const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
+  let seen = 0;
+  for (let offset = 0; offset <= copy.byteLength - 28; offset += 1) {
+    if (view.getUint32(offset, true) === 0x02014b50) {
+      if (seen === index) {
+        view.setUint32(offset + 24, size, true);
+        return copy;
+      }
+      seen += 1;
+    }
+  }
+  throw new Error(`ZIP central directory record ${index} was not found`);
 }
 
 async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
@@ -220,6 +251,14 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
   const streamingHttp = new StreamingHttp(async (url) => {
     if (testOptions.holdDownload?.url === url) {
       await testOptions.holdDownload.until;
+    }
+    if (url === "https://example.test/NoHashMod.zip") {
+      const archives = testOptions.noHashArchives ?? [fixtureModZip("NoHashMod")];
+      const archive = archives.length > 1 ? archives.shift() : archives[0];
+      if (archive === undefined) {
+        throw new Error("noHashArchives is empty");
+      }
+      return new Response(Buffer.from(archive), { status: 200 });
     }
     if (
       url === "https://example.test/ExampleMod.zip" ||
@@ -273,7 +312,7 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
   await request(app).put("/api/v1/config").send({ installationPath: ksp });
   await request(app).post("/api/v1/registry/refresh");
 
-  return { app, home, ksp, sha256: exampleHash.sha256 };
+  return { app, home, ksp, installService, downloads: join(home, "cache", "downloads"), sha256: exampleHash.sha256 };
 }
 
 async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
@@ -886,6 +925,69 @@ describe("mod install API", () => {
     const updates = await request(app).get("/api/v1/updates");
     expect(updates.status).toBe(200);
     expect(updates.body.updates).toEqual([]);
+  });
+
+  it("restores the previous version from the disk backup when a reinstall fails", async () => {
+    const first = fixtureModZip("NoHashMod");
+    const corrupt = declareEntrySize(
+      zipSync({
+        "GameData/NoHashMod/readme.txt": new TextEncoder().encode("version two\n"),
+        "GameData/NoHashMod/plugin.dll": new TextEncoder().encode("new-dll-content"),
+      }),
+      1,
+      3,
+    );
+    const { app, home, ksp, downloads } = await createInstallTestApp({ noHashArchives: [first, corrupt] });
+    const installed = await request(app).post("/api/v1/mods/NoHashMod/install").send({});
+    expect((await waitForJob(app, installed.body.job.jobId)).status).toBe("succeeded");
+    writeFileSync(join(ksp, "GameData", "NoHashMod", "readme.txt"), "edited by the user");
+    const recordBefore = manifestRecord(home, "NoHashMod");
+
+    const reinstall = await request(app).post("/api/v1/mods/NoHashMod/install").send({});
+    const finished = await waitForJob(app, reinstall.body.job.jobId);
+
+    expect(finished.status).toBe("failed");
+    expect(readFileSync(join(ksp, "GameData", "NoHashMod", "readme.txt"), "utf8")).toBe("edited by the user");
+    expect(readFileSync(join(ksp, "GameData", "NoHashMod", "plugin.dll"), "utf8")).toBe("fake-dll");
+    expect(manifestRecord(home, "NoHashMod")).toEqual(recordBefore);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(readdirSync(downloads)).toEqual([]);
+  });
+
+  it("leaves no backup or downloaded archive behind after a successful update", async () => {
+    const { app, ksp, downloads } = await createInstallTestApp();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const accepted = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+      expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+    }
+
+    expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(readdirSync(downloads)).toEqual([]);
+  });
+
+  it("removes leftover downloads at startup and keeps interrupted backups", async () => {
+    const { installService, ksp, downloads } = await createInstallTestApp();
+    mkdirSync(downloads, { recursive: true });
+    const hash = "a".repeat(64);
+    writeFileSync(join(downloads, `${hash}.zip`), "old cached archive");
+    writeFileSync(join(downloads, `${hash}.zip.0b1c2d3e-0000-4000-8000-000000000000.partial`), "half");
+    writeFileSync(join(downloads, `${hash}.zip.0b1c2d3e-0000-4000-8000-000000000001.download`), "half");
+    writeFileSync(join(downloads, "notes.txt"), "not ours");
+    const backup = join(ksp, ".kraken-backup", "0b1c2d3e-0000-4000-8000-000000000002", "GameData", "Mod");
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(join(backup, "file.cfg"), "user data");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await installService.cleanupTemporaryFiles(ksp);
+
+      expect(readdirSync(downloads)).toEqual(["notes.txt"]);
+      expect(readFileSync(join(backup, "file.cfg"), "utf8")).toBe("user data");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(".kraken-backup"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("lists available updates for managed mods with older versions", async () => {

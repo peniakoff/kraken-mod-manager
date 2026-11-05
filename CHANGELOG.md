@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A plan that changes an installed mod's version is blocked when an installed mod needs the old version.
 - A two-part `ksp_version_max` such as `1.12` now covers every `1.12.x`, so such mods are no longer hidden by the compatible-only filter.
 - Large mods such as Parallax-StockTextures and ParallaxContinued install. Archives are downloaded to disk and extracted with streaming (yauzl), so memory use no longer grows with the archive or with any single file in it. The per-file limit is gone and the uncompressed archive limit rises from 2 GiB to 8 GiB.
+- Reinstalling or updating a large mod no longer reads the previous version into memory. Its files move to a backup folder (`.kraken-backup` in the KSP folder) and come back if the install fails.
+- Downloaded archives are deleted as soon as their mod is installed or has failed, and leftover downloads from earlier runs are removed at startup. Backups from an interrupted install are kept and reported in the log, since they can hold the only copy of the previous version.
+- The service keeps at most 50 finished install jobs in memory.
 
 ## [0.3.0] - 2026-11-01
 

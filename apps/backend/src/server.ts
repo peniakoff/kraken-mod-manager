@@ -47,6 +47,13 @@ async function start(): Promise<void> {
   if (frontendAssets !== undefined) {
     dependencies.frontendAssets = frontendAssets;
   }
+  // Runs before the server accepts requests, so no install can be active.
+  try {
+    const config = await dependencies.configStore.read();
+    await dependencies.installService.cleanupTemporaryFiles(config?.activeInstallationPath);
+  } catch (error: unknown) {
+    console.warn(`Could not clean up temporary install files: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const server = createServer(
     createApp(
       process.env.KMM_VERSION ?? process.env.KMM_BUILD_VERSION ?? process.env.npm_package_version,

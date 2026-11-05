@@ -107,11 +107,22 @@ export class ZipArchive {
         );
       });
       raw.pipe(counted);
+      // The consumer may await other work before it starts reading. An error
+      // in that gap must not become an uncaught exception: it stays on
+      // `counted.errored`, reaches a consumer that reads later, and is
+      // re-thrown below if the consumer never sees it.
+      let streamError: unknown;
+      counted.on("error", (error: unknown) => {
+        streamError ??= error;
+      });
 
       try {
         await onEntry(info, counted);
       } finally {
         raw.destroy();
+      }
+      if (streamError !== undefined) {
+        throw streamError;
       }
       extracted.add(info.rawPath);
     });
