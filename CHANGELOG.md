@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
 ### Added
 - **Mod updates:** an Update button per mod and an Update all button on the dashboard, and an Update button in the mod details panel. Update all queues every update that can run unattended and lists the ones that need a provider choice or are blocked.
 
@@ -18,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reinstalling or updating a large mod no longer reads the previous version into memory. Its files move to a backup folder (`.kraken-backup` in the KSP folder) and come back if the install fails.
 - Downloaded archives are deleted as soon as their mod is installed or has failed, and leftover downloads from earlier runs are removed at startup. Backups from an interrupted install are kept and reported in the log, since they can hold the only copy of the previous version.
 - The service keeps at most 50 finished install jobs in memory.
+
+### Known limitations
+- Binaries are still not code-signed, so Gatekeeper and Windows SmartScreen may warn on first launch.
+- Files backed up by an install that was interrupted (for example by closing Kraken mid-install) are not restored automatically; the log names the `.kraken-backup` folder to restore them from.
 
 ## [0.3.0] - 2026-11-01
 
