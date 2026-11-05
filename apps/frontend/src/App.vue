@@ -119,18 +119,21 @@ async function loadSetup(): Promise<void> {
   status.value = "checking";
   errorMessage.value = undefined;
 
+  let config: Awaited<ReturnType<typeof getConfig>>;
   try {
     version.value = (await getHealth()).version;
+    // Without a readable config the setup picker would offer to overwrite it.
+    config = await getConfig();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "The local service is unavailable.";
     status.value = "unavailable";
     return;
   }
 
-  // The service answered, so a failure from here on (an unreadable registry
-  // cache, for example) is an error to report, not a dead service.
+  // The service answered and the config is known, so a failure from here on
+  // (an unreadable registry cache, for example) is an error to report, not a
+  // dead service.
   try {
-    const config = await getConfig();
     if (config.configured) {
       installation.value = config.installation;
       candidates.value = [];

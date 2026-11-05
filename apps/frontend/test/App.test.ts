@@ -845,6 +845,24 @@ describe("App service status", () => {
     expect(systems(wrapper)).toContain("Service connected (test-version)");
   });
 
+  it("does not offer the installation picker when the config cannot be read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/config") return json({ code: "CONFIG_ERROR", message: "Config file is malformed." }, 500);
+        if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+        throw new Error(`unexpected request ${url}`);
+      }),
+    );
+    const wrapper = mount(App);
+
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("Config file is malformed."));
+    expect(wrapper.text()).toContain("Local service is unavailable.");
+    expect(wrapper.text()).not.toContain("Detected installations");
+  });
+
   it("marks the service as down when it stops answering, and up again when it answers", async () => {
     let reachable = false;
     vi.stubGlobal(
