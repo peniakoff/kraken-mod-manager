@@ -438,3 +438,47 @@ test("treats a ksp_version_max without a patch number as covering every patch", 
   assert.equal(isCompatibleWithKsp(module, "1.13.0"), false);
   assert.equal(isCompatibleWithKsp({ ...module, kspVersionMax: "1.12.3" }, "1.12.5"), false);
 });
+
+function withDownload(download) {
+  return parseCkanDocument({ identifier: "Trajectories", name: "Trajectories", author: "Youen", version: "2.4.5.5", download });
+}
+
+test("reads a list of download URLs as the first URL plus mirrors", () => {
+  const module = withDownload([
+    "https://github.com/linuxgurugamer/KSPTrajectories/releases/download/2.4.5.5/Trajectories.zip",
+    " https://spacedock.info/mod/396/Trajectories/download/2.4.5.5 ",
+  ]);
+
+  assert.equal(module?.download, "https://github.com/linuxgurugamer/KSPTrajectories/releases/download/2.4.5.5/Trajectories.zip");
+  assert.deepEqual(module?.downloadMirrors, ["https://spacedock.info/mod/396/Trajectories/download/2.4.5.5"]);
+});
+
+test("keeps a single download URL without mirrors", () => {
+  const module = withDownload("https://spacedock.info/mod/396/download");
+
+  assert.equal(module?.download, "https://spacedock.info/mod/396/download");
+  assert.equal(module?.downloadMirrors, undefined);
+});
+
+test("drops download URLs that are not http or https", () => {
+  const module = withDownload(["file:///etc/passwd", "data:application/zip;base64,AAAA", "not a url", "http://example.test/a.zip"]);
+
+  assert.equal(module?.download, "http://example.test/a.zip");
+  assert.equal(module?.downloadMirrors, undefined);
+  assert.equal(withDownload("file:///etc/passwd")?.download, undefined);
+});
+
+test("has no download when the list holds no usable URL", () => {
+  for (const download of [[], [""], [42, null], ["ftp://example.test/a.zip"]]) {
+    const module = withDownload(download);
+    assert.equal(module?.download, undefined);
+    assert.equal(module?.downloadMirrors, undefined);
+  }
+});
+
+test("lists each mirror once", () => {
+  const module = withDownload(["https://a.test/x.zip", "https://b.test/x.zip", "https://a.test/x.zip", "https://b.test/x.zip"]);
+
+  assert.equal(module?.download, "https://a.test/x.zip");
+  assert.deepEqual(module?.downloadMirrors, ["https://b.test/x.zip"]);
+});

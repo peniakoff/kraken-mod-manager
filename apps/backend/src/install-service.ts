@@ -463,16 +463,7 @@ export class InstallService {
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
     }
-    const download = await this.http.download(module.download, downloadPath, (progress) => {
-      this.jobStore.update(jobId, {
-        phase: "downloading",
-        bytesReceived: progress.bytesReceived,
-        ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
-      });
-    });
-
-    this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
-    verifyDownloadHash(module.downloadHash, { sha1: download.sha1, sha256: download.sha256 });
+    await this.downloadVerifiedArchive(jobId, module, [module.download, ...(module.downloadMirrors ?? [])], stepLabel, downloadPath);
 
     this.jobStore.update(jobId, { phase: "extracting", message: `Extracting archive${stepLabel}.` });
     const zipEntries = await this.zip.listEntries(downloadPath);
@@ -583,6 +574,53 @@ export class InstallService {
         throw error;
       }
     });
+  }
+
+  /**
+   * Downloads the archive from the first URL that answers with a file whose
+   * hash matches, trying mirrors in order. Every attempt is verified, so a
+   * mirror serving a different file is skipped rather than installed.
+   */
+  private async downloadVerifiedArchive(
+    jobId: string,
+    module: CkanModule,
+    urls: readonly string[],
+    stepLabel: string,
+    downloadPath: string,
+  ): Promise<void> {
+    const failures: string[] = [];
+    for (const [index, url] of urls.entries()) {
+      const source = urls.length > 1 ? ` from source ${index + 1} of ${urls.length}` : "";
+      this.jobStore.update(jobId, {
+        phase: "downloading",
+        message: `Downloading archive${stepLabel}${source}.`,
+        bytesReceived: 0,
+      });
+      try {
+        const download = await this.http.download(url, downloadPath, (progress) => {
+          this.jobStore.update(jobId, {
+            phase: "downloading",
+            bytesReceived: progress.bytesReceived,
+            ...(progress.bytesTotal !== undefined ? { bytesTotal: progress.bytesTotal } : {}),
+          });
+        });
+        this.jobStore.update(jobId, { phase: "verifying", message: `Verifying download hash${stepLabel}.` });
+        verifyDownloadHash(module.downloadHash, { sha1: download.sha1, sha256: download.sha256 });
+        return;
+      } catch (error: unknown) {
+        const retryable =
+          error instanceof StreamingHttpError || (error instanceof InstallPolicyError && error.code === "HASH_MISMATCH");
+        if (!retryable || urls.length === 1) {
+          throw error;
+        }
+        await rm(downloadPath, { force: true });
+        failures.push(`${url}: ${errorMessage(error)}`);
+      }
+    }
+    throw new InstallServiceError(
+      `Could not download ${module.identifier} from any of its ${urls.length} sources. ${failures.join(" ")}`,
+      "INSTALL_FAILED",
+    );
   }
 
   private async rollbackCompletedModules(

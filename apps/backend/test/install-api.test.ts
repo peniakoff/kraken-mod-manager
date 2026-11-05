@@ -195,6 +195,25 @@ function fixtureMetaArchive(
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "RecommendingMod" }],
       }),
     },
+    ...[
+      ["MirroredMod", ["https://example.test/missing.zip", "https://example.test/ExampleMod.zip"]],
+      ["TamperedMirrorMod", ["https://example.test/tampered.zip", "https://example.test/ExampleMod.zip"]],
+      ["UnreachableMod", ["https://example.test/missing.zip", "https://example.test/tampered.zip"]],
+    ].map(([identifier, download]) => ({
+      path: `CKAN-meta-master/${identifier}/${identifier}-1.0.0.ckan`,
+      content: JSON.stringify({
+        spec_version: "v1.34",
+        identifier,
+        name: identifier,
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download,
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: identifier }],
+      }),
+    })),
     ...[4096, 8192].map((resolution) => ({
       path: `CKAN-meta-master/RSSTextures${resolution}/RSSTextures${resolution}-1.0.0.ckan`,
       content: JSON.stringify({
@@ -334,6 +353,9 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
         status: 200,
         headers: { "content-length": String(zipBytes.byteLength) },
       });
+    }
+    if (url === "https://example.test/tampered.zip") {
+      return new Response(Buffer.from(fixtureModZip("Tampered")), { status: 200 });
     }
     if (url === "https://example.test/ModuleManager.zip") {
       return new Response(Buffer.from(mmZipBytes), {
@@ -799,6 +821,29 @@ describe("mod install API", () => {
 
     expect(plan.status).toBe(400);
     expect(install.status).toBe(400);
+  });
+
+  it.each(["MirroredMod", "TamperedMirrorMod"])(
+    "falls back to the next download mirror for %s",
+    async (identifier) => {
+      const { app, ksp, downloads } = await createInstallTestApp();
+      const accepted = await request(app).post(`/api/v1/mods/${identifier}/install`).send({});
+
+      expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+      expect(readFileSync(join(ksp, "GameData", identifier, "readme.txt"), "utf8")).toContain("hello from ExampleMod");
+      expect(readdirSync(downloads)).toEqual([]);
+    },
+  );
+
+  it("names every mirror when none of them works", async () => {
+    const { app, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/UnreachableMod/install").send({});
+    const finished = await waitForJob(app, accepted.body.job.jobId);
+
+    expect(finished.status).toBe("failed");
+    expect(finished.error).toContain("https://example.test/missing.zip: Archive download failed with HTTP 404.");
+    expect(finished.error).toContain("https://example.test/tampered.zip: Download SHA-256 does not match metadata.");
+    expect(existsSync(join(ksp, "GameData", "UnreachableMod"))).toBe(false);
   });
 
   it("rejects dependency installs with pending choices", async () => {

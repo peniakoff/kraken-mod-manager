@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installing a mod offers its recommended and suggested mods, as CKAN does: recommendations start picked, suggestions unpicked. Picked mods are installed in the same job with their own dependencies and count as installed by hand, so uninstalling the first mod does not offer to remove them. Updates and reinstalls do not offer them again.
 
 ### Fixed
+- Mods whose metadata lists several download URLs (CKAN spec v1.34 mirrors, for example GitHub and SpaceDock) can be installed again; they had no Install button. Kraken tries the URLs in order, moves on when a download fails or the file does not match its hash, and reports every attempt if none works. Download URLs other than http and https are ignored. The registry cache format changes, so refresh the registry once after updating.
 - An install that was interrupted (for example by closing Kraken or a crash mid-install) is undone at the next start: files it had written are removed, the previous version is moved back from `.kraken-backup` and the install record is restored, including for every dependency installed in the same job. The app shows what was undone; anything that could not be undone stays in place and is reported.
 
 ## [0.5.0] - 2026-11-05

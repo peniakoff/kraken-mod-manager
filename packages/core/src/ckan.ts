@@ -69,7 +69,10 @@ export interface CkanModule {
   tags: string[];
   /** Virtual package names this module satisfies, excluding its own identifier. */
   provides: string[];
+  /** The first usable download URL. */
   download?: string;
+  /** Further URLs for the same archive, tried in order when `download` fails. */
+  downloadMirrors?: string[];
   downloadSize?: number;
   downloadHash?: CkanDownloadHash;
   install?: CkanInstallStanza[];
@@ -153,9 +156,12 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     module.kspVersionMax = kspVersionMax;
   }
 
-  const download = asNonEmptyString(document.download);
+  const [download, ...downloadMirrors] = parseDownloadUrls(document.download);
   if (download !== undefined) {
     module.download = download;
+  }
+  if (downloadMirrors.length > 0) {
+    module.downloadMirrors = downloadMirrors;
   }
 
   const downloadSize = asNonNegativeInt(document.download_size);
@@ -395,6 +401,32 @@ function matchesQuery(module: CkanModule, query: string): boolean {
     return true;
   }
   return module.description?.toLowerCase().includes(query) === true;
+}
+
+/**
+ * `download` is one URL, or since spec v1.34 a list of mirrors for the same
+ * archive. Only http and https are kept: the URLs come from third-party
+ * metadata and go straight to fetch, which would also accept `data:` URLs.
+ */
+function parseDownloadUrls(value: unknown): string[] {
+  const candidates = Array.isArray(value) ? value : [value];
+  const urls: string[] = [];
+  for (const candidate of candidates) {
+    const url = asNonEmptyString(candidate);
+    if (url !== undefined && isHttpUrl(url) && !urls.includes(url)) {
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
