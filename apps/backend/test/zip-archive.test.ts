@@ -58,6 +58,22 @@ describe("ZipArchive", () => {
     ).toThrow(/size limit/i);
   });
 
+  it("accepts a single entry of several hundred MiB, such as a bundled Unity package", () => {
+    const zip = new ZipArchive();
+    const burst = declareAllSizes(zipSync({ "GameData/000_KSPBurst/com.unity.burst@1.7.4.zip": encode("x") }), 408_723_559);
+
+    expect(zip.listEntries(burst)).toEqual([
+      {
+        path: "GameData/000_KSPBurst/com.unity.burst@1.7.4.zip",
+        rawPath: "GameData/000_KSPBurst/com.unity.burst@1.7.4.zip",
+        size: 408_723_559,
+      },
+    ]);
+    expect(() =>
+      zip.listEntries(declareAllSizes(zipSync({ "GameData/Big/file.bin": encode("x") }), 1024 * 1024 * 1024 + 1)),
+    ).toThrow(/size limit/i);
+  });
+
   it("accepts archives that declare more than 2 GiB in total", () => {
     const zip = new ZipArchive();
     const count = Math.floor((2 * 1024 * 1024 * 1024) / MAX_ZIP_ENTRY_BYTES) + 1;
