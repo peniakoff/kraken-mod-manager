@@ -50,6 +50,8 @@ describe("InstallJournal", () => {
     expect(Math.abs(statSync(path).mtimeMs - Date.now())).toBeLessThan(5000);
 
     await journal.close();
+    // A refresh already in flight when close() ran may still land.
+    await wait(20);
     setMtimeBack(path);
     const before = statSync(path).mtimeMs;
     await wait(80);
