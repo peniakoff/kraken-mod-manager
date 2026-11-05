@@ -8,6 +8,7 @@ export {
   CkanIndex,
   compareCkanVersions,
   isCompatibleWithKsp,
+  isInstallable,
   parseCkanDocument,
   parseCkanText,
   refreshRegistry,

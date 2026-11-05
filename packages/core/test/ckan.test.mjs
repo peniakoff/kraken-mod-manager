@@ -5,6 +5,7 @@ import {
   CkanIndex,
   compareCkanVersions,
   isCompatibleWithKsp,
+  isInstallable,
   parseCkanDocument,
   parseCkanText,
   refreshRegistry,
@@ -481,4 +482,23 @@ test("lists each mirror once", () => {
 
   assert.equal(module?.download, "https://a.test/x.zip");
   assert.deepEqual(module?.downloadMirrors, ["https://b.test/x.zip"]);
+});
+
+test("reads kind for metapackages and DLC", () => {
+  const base = { identifier: "A", name: "A", version: "1" };
+  const kindOf = (kind) => parseCkanDocument({ ...base, kind })?.kind;
+
+  assert.equal(kindOf("metapackage"), "metapackage");
+  assert.equal(kindOf("dlc"), "dlc");
+  assert.equal(kindOf("package"), undefined);
+  assert.equal(kindOf("other"), undefined);
+  assert.equal(kindOf(42), undefined);
+  assert.equal(parseCkanDocument(base)?.kind, undefined);
+});
+
+test("decides installability", () => {
+  assert.equal(isInstallable({ download: "https://a.test/x.zip" }), true);
+  assert.equal(isInstallable({ kind: "metapackage" }), true);
+  assert.equal(isInstallable({ kind: "dlc", download: "https://a.test/x.zip" }), false);
+  assert.equal(isInstallable({}), false);
 });
