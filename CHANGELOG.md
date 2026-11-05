@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- An install that was interrupted (for example by closing Kraken or a crash mid-install) is undone at the next start: files it had written are removed, the previous version is moved back from `.kraken-backup` and the install record is restored, including for every dependency installed in the same job. The app shows what was undone; anything that could not be undone stays in place and is reported.
+
 ## [0.5.0] - 2026-11-05
 
 ### Changed
