@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import AppIcon from "./AppIcon.vue";
+import { formatCount } from "../format.js";
 
 const props = defineProps<{
   total: number;
@@ -19,25 +21,31 @@ const rangeEnd = computed(() => Math.min(props.total, props.offset + props.limit
 </script>
 
 <template>
-  <nav class="mt-4 flex flex-wrap items-center gap-3" aria-label="Mod search pages">
-    <button
-      class="rounded-md border border-slate-600 px-3 py-1 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-      type="button"
-      :disabled="disabled || currentPage === 0"
-      @click="emit('update:page', currentPage - 1)"
-    >
-      Previous
-    </button>
-    <p class="text-sm text-slate-400" aria-live="polite">
-      Showing {{ rangeStart }}–{{ rangeEnd }} of {{ total }} · Page {{ currentPage + 1 }} of {{ pageCount }}
+  <nav
+    class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3"
+    aria-label="Mod search pages"
+  >
+    <p class="readout text-[13px] text-muted" aria-live="polite">
+      Showing {{ formatCount(rangeStart) }}–{{ formatCount(rangeEnd) }} of {{ formatCount(total) }} · Page
+      {{ currentPage + 1 }} of {{ formatCount(pageCount) }}
     </p>
-    <button
-      class="rounded-md border border-slate-600 px-3 py-1 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-      type="button"
-      :disabled="disabled || currentPage + 1 >= pageCount"
-      @click="emit('update:page', currentPage + 1)"
-    >
-      Next
-    </button>
+    <div class="flex gap-2">
+      <button
+        class="btn btn-secondary btn-sm"
+        type="button"
+        :disabled="disabled || currentPage === 0"
+        @click="emit('update:page', currentPage - 1)"
+      >
+        <AppIcon name="chevron-left" />Previous
+      </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        type="button"
+        :disabled="disabled || currentPage + 1 >= pageCount"
+        @click="emit('update:page', currentPage + 1)"
+      >
+        Next<AppIcon name="chevron-right" />
+      </button>
+    </div>
   </nav>
 </template>

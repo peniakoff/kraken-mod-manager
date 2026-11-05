@@ -107,7 +107,7 @@ describe("App", () => {
     });
     expect(MockEventSource.instances[0]?.url).toBe("/api/v1/jobs/job-1/events");
 
-    await wrapper.findAll("button").find((button) => button.text() === "Dashboard")!.trigger("click");
+    await wrapper.findAll("button").find((button) => button.text() === "Overview")!.trigger("click");
     expect(wrapper.text()).toContain("Active installation");
     expect(wrapper.find('[data-job-id="job-1"]').exists()).toBe(true);
 
@@ -273,9 +273,9 @@ describe("App", () => {
 
     const wrapper = mount(App);
     await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
-    await wrapper.findAll("button").find((button) => button.text() === "Browse mods")!.trigger("click");
+    await wrapper.findAll("button").find((button) => button.text().startsWith("Installed"))!.trigger("click");
     await vi.waitFor(() => expect(wrapper.text()).toContain("Module Manager"));
-    await wrapper.findAll("button").filter((button) => button.text() === "Uninstall")[1]!.trigger("click");
+    await wrapper.findAll('[data-testid="installed-uninstall-btn"]')[1]!.trigger("click");
 
     await vi.waitFor(() => expect(wrapper.text()).toContain("Uninstall Module Manager?"));
     expect(wrapper.text()).toContain("This will also remove:");
@@ -458,8 +458,8 @@ describe("App", () => {
     const wrapper = mount(App);
 
     await vi.waitFor(() => {
-      expect(wrapper.text()).toContain("Dashboard");
-      expect(wrapper.text()).toContain("Kraken Mod Manager");
+      expect(wrapper.text()).toContain("Overview");
+      expect(wrapper.text()).toContain("Kraken");
       expect(wrapper.text()).toContain("Active installation");
       expect(wrapper.text()).toContain("/games/KSP");
       expect(wrapper.text()).toContain("Installed mods");
@@ -473,7 +473,7 @@ describe("App", () => {
     await refreshButton!.trigger("click");
 
     await vi.waitFor(() => {
-      expect(wrapper.text()).toContain("1 modules indexed");
+      expect(wrapper.text()).toContain("1 module indexed");
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/registry/refresh", expect.objectContaining({ method: "POST" }));
@@ -590,7 +590,7 @@ describe("App", () => {
     const browseButton = wrapper.findAll("button").find((button) => button.text() === "Browse mods");
     await browseButton!.trigger("click");
     await vi.waitFor(() => {
-      expect(wrapper.text()).toContain("Category:");
+      expect(wrapper.text()).toContain("Category");
     });
 
     const modsCalls = () =>

@@ -203,8 +203,8 @@ describe("ModDetailsPanel component", () => {
       },
     });
 
-    expect(wrapper.find('[data-testid="details-installed-badge"]').text()).toContain("Installed (v4.2.2)");
-    expect(wrapper.find('[data-testid="details-update-badge"]').text()).toContain("Update to v4.2.3 available");
+    expect(wrapper.find('[data-testid="details-installed-badge"]').text()).toBe("Installed 4.2.2");
+    expect(wrapper.find('[data-testid="details-update-badge"]').text()).toBe("Update 4.2.3 available");
 
     const uninstallBtn = wrapper.find('[data-testid="details-uninstall-btn"]');
     expect(uninstallBtn.exists()).toBe(true);
@@ -215,6 +215,20 @@ describe("ModDetailsPanel component", () => {
     expect(installBtn.text()).toBe("Reinstall");
     await installBtn.trigger("click");
     expect(wrapper.emitted("install")).toEqual([[sampleMod]]);
+  });
+
+  it("shows versions as published, without adding a second v prefix", () => {
+    const wrapper = mount(ModDetailsPanel, {
+      props: {
+        mod: { ...sampleMod, version: "v112.0.1" },
+        versions: [{ ...sampleMod, version: "v112.0.1" }],
+        installedMods: [{ identifier: "ModuleManager", name: "Module Manager", version: "v112.0.1", status: "managed" }],
+        availableUpdates: [],
+      },
+    });
+
+    expect(wrapper.find('[data-testid="details-installed-badge"]').text()).toBe("Installed v112.0.1");
+    expect(wrapper.text()).not.toContain("vv112");
   });
 
   it("emits close on close button click and escape key", async () => {
@@ -249,7 +263,7 @@ describe("ModDetailsPanel component", () => {
     });
 
     const button = wrapper.find('[data-testid="details-update-btn"]');
-    expect(button.text()).toBe("Update to v4.2.3");
+    expect(button.text()).toBe("Update to 4.2.3");
     await button.trigger("click");
     expect(wrapper.emitted("install")).toEqual([[sampleMod]]);
   });

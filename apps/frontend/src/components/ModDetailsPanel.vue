@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { AvailableUpdate, CkanModule, CkanRelationship, CkanResources, InstalledMod } from "@kraken/contracts";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
+import AppIcon from "./AppIcon.vue";
 
 const props = withDefaults(defineProps<{
   mod: CkanModule;
@@ -106,6 +107,19 @@ const relationships = computed(() => {
 
 const provides = computed(() => currentVersionMod.value.provides ?? []);
 
+const relationshipGroups = computed(() => {
+  const r = relationships.value;
+  if (!r) {
+    return [];
+  }
+  return [
+    { key: "depends", label: "Depends on:", items: r.depends, danger: false },
+    { key: "conflicts", label: "Conflicts with:", items: r.conflicts, danger: true },
+    { key: "recommends", label: "Recommends:", items: r.recommends, danger: false },
+    { key: "suggests", label: "Suggests:", items: r.suggests, danger: false },
+  ].filter((group) => group.items.length > 0);
+});
+
 const hasRelationships = computed(() => {
   const r = relationships.value;
   return Boolean(
@@ -174,7 +188,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="fixed inset-0 z-40 flex justify-end bg-slate-950/70"
+    class="fixed inset-0 z-40 flex justify-end bg-void/70 backdrop-blur-[2px]"
     role="dialog"
     aria-modal="true"
     aria-labelledby="mod-details-title"
@@ -183,243 +197,159 @@ onUnmounted(() => {
   >
     <div
       ref="dialogContainerRef"
-      class="flex h-full w-full max-w-2xl flex-col border-l border-slate-700 bg-slate-900 p-6 shadow-2xl overflow-y-auto"
+      class="flex h-full w-full max-w-2xl flex-col overflow-y-auto border-l border-line-strong bg-panel shadow-[0_0_64px_rgb(0_0_0/0.5)]"
     >
-      <!-- Header -->
-      <div class="flex items-start justify-between border-b border-slate-800 pb-4">
-        <div>
+      <div class="flex items-start justify-between gap-4 border-b border-line px-6 py-5">
+        <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <h2 id="mod-details-title" class="text-2xl font-bold text-slate-100">{{ currentVersionMod.name }}</h2>
-            <span v-if="currentVersionMod.license" class="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
-              {{ currentVersionMod.license }}
-            </span>
+            <h2 id="mod-details-title" class="text-2xl font-semibold">{{ currentVersionMod.name }}</h2>
+            <span v-if="currentVersionMod.license" class="badge">{{ currentVersionMod.license }}</span>
           </div>
-          <p class="mt-1 font-mono text-sm text-cyan-400">
-            {{ currentVersionMod.identifier }}
-            <span class="text-slate-400">· by {{ currentVersionMod.authors.join(", ") || "Unknown author" }}</span>
+          <p class="mt-1 text-[13px] text-muted">
+            <span class="readout text-accent">{{ currentVersionMod.identifier }}</span>
+            · by {{ currentVersionMod.authors.join(", ") || "Unknown author" }}
           </p>
         </div>
         <button
           ref="closeButtonRef"
-          class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          class="btn btn-icon -mr-2"
           type="button"
           aria-label="Close details"
           data-testid="close-details-btn"
           @click="emit('close')"
         >
-          ✕
+          <AppIcon name="close" :size="18" />
         </button>
       </div>
 
-      <!-- Actions & Status Banner -->
-      <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <!-- Installed status -->
-          <span
-            v-if="isInstalled"
-            class="rounded-full border border-sky-500/60 bg-sky-950/40 px-2.5 py-0.5 text-xs font-semibold text-sky-300"
-            data-testid="details-installed-badge"
-          >
-            Installed{{ installedMod?.version ? ` (v${installedMod.version})` : "" }}
-          </span>
-          <!-- Update status -->
-          <span
-            v-if="availableUpdate !== undefined"
-            class="rounded-full border border-violet-500/60 bg-violet-950/40 px-2.5 py-0.5 text-xs font-semibold text-violet-300"
-            data-testid="details-update-badge"
-          >
-            Update to v{{ availableUpdate.availableVersion }} available
-          </span>
-          <!-- Compatibility -->
-          <span
-            :class="[
-              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
-              compat.ok
-                ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300'
-                : 'border-amber-500/60 bg-amber-950/40 text-amber-300',
-            ]"
-            data-testid="details-compat-flag"
-          >
-            {{ compat.text }}
-          </span>
-        </div>
+      <div class="space-y-6 px-6 py-5">
+        <div class="panel flex flex-wrap items-center justify-between gap-3 bg-hull p-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <span v-if="isInstalled" class="badge badge-ok" data-testid="details-installed-badge">
+              Installed{{ installedMod?.version ? ` ${installedMod.version}` : "" }}
+            </span>
+            <span v-if="availableUpdate !== undefined" class="badge badge-info" data-testid="details-update-badge">
+              Update {{ availableUpdate.availableVersion }} available
+            </span>
+            <span :class="['badge', compat.ok ? '' : 'badge-warn']" data-testid="details-compat-flag">
+              <AppIcon :name="compat.ok ? 'check' : 'alert'" :size="14" :class="compat.ok ? 'text-ok' : ''" />
+              {{ compat.text }}
+            </span>
+          </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            v-if="isManaged"
-            class="rounded-md border border-rose-500/60 bg-rose-950/30 px-3 py-1.5 text-sm font-semibold text-rose-300 hover:bg-rose-900/50 disabled:opacity-50"
-            type="button"
-            :disabled="isUninstalling || isInstalling"
-            data-testid="details-uninstall-btn"
-            @click="installedMod && emit('uninstall', installedMod)"
-          >
-            {{ isUninstalling ? "Uninstalling…" : "Uninstall" }}
-          </button>
-          <button
-            v-if="updateTarget !== undefined && updateTarget.download !== undefined"
-            class="rounded-md border border-violet-400 px-3 py-1.5 text-sm font-semibold text-violet-300 hover:bg-violet-400/10 disabled:opacity-50"
-            type="button"
-            :disabled="isInstalling || isUninstalling"
-            data-testid="details-update-btn"
-            @click="emit('install', updateTarget)"
-          >
-            Update to v{{ updateTarget.version }}
-          </button>
-          <button
-            v-if="currentVersionMod.download !== undefined"
-            class="rounded-md bg-cyan-500 px-4 py-1.5 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-            type="button"
-            :disabled="isInstalling || isUninstalling"
-            data-testid="details-install-btn"
-            @click="emit('install', currentVersionMod)"
-          >
-            {{ isInstalling ? "Installing…" : isInstalled ? "Reinstall" : "Install" }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Versions selector & Download size -->
-      <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-        <div class="flex items-center gap-2">
-          <label class="text-xs font-medium uppercase tracking-wider text-slate-400" for="version-select">
-            Version:
-          </label>
-          <select
-            id="version-select"
-            class="rounded-md border border-slate-700 bg-slate-950 px-3 py-1 text-sm font-mono text-slate-200"
-            :value="selectedVersionString"
-            data-testid="version-select"
-            @change="onVersionChange"
-          >
-            <option
-              v-for="ver in (versions.length > 0 ? versions : [mod])"
-              :key="ver.version"
-              :value="ver.version"
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              v-if="isManaged"
+              class="btn btn-danger btn-sm"
+              type="button"
+              :disabled="isUninstalling || isInstalling"
+              data-testid="details-uninstall-btn"
+              @click="installedMod && emit('uninstall', installedMod)"
             >
-              {{ ver.version }}{{ ver.version === mod.version ? " (latest)" : "" }}
-            </option>
-          </select>
-          <span v-if="isLoadingVersions" class="text-xs text-slate-500">Loading versions…</span>
-        </div>
-        <div v-if="formatDownloadSize(currentVersionMod.downloadSize)" class="text-xs text-slate-400">
-          Download size: {{ formatDownloadSize(currentVersionMod.downloadSize) }}
-        </div>
-      </div>
-
-      <!-- Description / Abstract -->
-      <div class="mt-4 border-b border-slate-800 pb-4">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Description</h3>
-        <p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-300">
-          {{ currentVersionMod.description || currentVersionMod.abstract || "No description provided." }}
-        </p>
-      </div>
-
-      <!-- Project Links -->
-      <div v-if="safeResources.length > 0" class="mt-4 border-b border-slate-800 pb-4">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Project Links</h3>
-        <div class="mt-2 flex flex-wrap gap-2">
-          <a
-            v-for="link in safeResources"
-            :key="link.label"
-            :href="link.url"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs text-cyan-400 hover:border-cyan-500/60 hover:text-cyan-300"
-            :data-testid="`resource-link-${link.id}`"
-          >
-            {{ link.label }} ↗
-          </a>
-        </div>
-      </div>
-
-      <!-- Dependencies & Relationships -->
-      <div class="mt-4 border-b border-slate-800 pb-4">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Relationships</h3>
-        <div v-if="hasRelationships" class="mt-2 space-y-3">
-          <div v-if="provides.length > 0">
-            <span class="text-xs font-medium text-slate-400">Provides:</span>
-            <ul class="mt-1 flex flex-wrap gap-1.5">
-              <li
-                v-for="name in provides"
-                :key="name"
-                class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
-              >
-                {{ name }}
-              </li>
-            </ul>
-          </div>
-
-          <!-- Depends -->
-          <div v-if="relationships && relationships.depends.length > 0">
-            <span class="text-xs font-medium text-slate-400">Depends on:</span>
-            <ul class="mt-1 flex flex-wrap gap-1.5">
-              <li
-                v-for="(dep, index) in relationships.depends"
-                :key="`${index}-${formatRelationship(dep)}`"
-                class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
-              >
-                {{ formatRelationship(dep) }}
-              </li>
-            </ul>
-          </div>
-
-          <!-- Conflicts -->
-          <div v-if="relationships && relationships.conflicts.length > 0">
-            <span class="text-xs font-medium text-rose-400">Conflicts with:</span>
-            <ul class="mt-1 flex flex-wrap gap-1.5">
-              <li
-                v-for="(conf, index) in relationships.conflicts"
-                :key="`${index}-${formatRelationship(conf)}`"
-                class="rounded border border-rose-900/60 bg-rose-950/40 px-2 py-0.5 text-xs text-rose-300 font-mono"
-              >
-                {{ formatRelationship(conf) }}
-              </li>
-            </ul>
-          </div>
-
-          <!-- Recommends -->
-          <div v-if="relationships && relationships.recommends.length > 0">
-            <span class="text-xs font-medium text-slate-400">Recommends:</span>
-            <ul class="mt-1 flex flex-wrap gap-1.5">
-              <li
-                v-for="(rec, index) in relationships.recommends"
-                :key="`${index}-${formatRelationship(rec)}`"
-                class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
-              >
-                {{ formatRelationship(rec) }}
-              </li>
-            </ul>
-          </div>
-
-          <!-- Suggests -->
-          <div v-if="relationships && relationships.suggests.length > 0">
-            <span class="text-xs font-medium text-slate-400">Suggests:</span>
-            <ul class="mt-1 flex flex-wrap gap-1.5">
-              <li
-                v-for="(sug, index) in relationships.suggests"
-                :key="`${index}-${formatRelationship(sug)}`"
-                class="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs text-slate-300 font-mono"
-              >
-                {{ formatRelationship(sug) }}
-              </li>
-            </ul>
+              {{ isUninstalling ? "Uninstalling…" : "Uninstall" }}
+            </button>
+            <button
+              v-if="updateTarget !== undefined && updateTarget.download !== undefined"
+              class="btn btn-secondary btn-sm"
+              type="button"
+              :disabled="isInstalling || isUninstalling"
+              data-testid="details-update-btn"
+              @click="emit('install', updateTarget)"
+            >
+              Update to {{ updateTarget.version }}
+            </button>
+            <button
+              v-if="currentVersionMod.download !== undefined"
+              class="btn btn-primary btn-sm"
+              type="button"
+              :disabled="isInstalling || isUninstalling"
+              data-testid="details-install-btn"
+              @click="emit('install', currentVersionMod)"
+            >
+              {{ isInstalling ? "Installing…" : isInstalled ? "Reinstall" : "Install" }}
+            </button>
           </div>
         </div>
-        <p v-else class="mt-1 text-xs text-slate-500">No dependencies declared.</p>
-      </div>
 
-      <!-- Tags -->
-      <div v-if="currentVersionMod.tags.length > 0" class="mt-4">
-        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Tags</h3>
-        <div class="mt-2 flex flex-wrap gap-1.5">
-          <span
-            v-for="tag in currentVersionMod.tags"
-            :key="tag"
-            class="rounded-full border border-slate-700 px-2.5 py-0.5 text-xs text-slate-300"
-          >
-            {{ tag }}
-          </span>
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <label class="label block" for="version-select">Version</label>
+            <div class="mt-1.5 flex items-center gap-3">
+              <select
+                id="version-select"
+                class="field readout h-9 w-auto pr-8"
+                :value="selectedVersionString"
+                data-testid="version-select"
+                @change="onVersionChange"
+              >
+                <option v-for="ver in versions.length > 0 ? versions : [mod]" :key="ver.version" :value="ver.version">
+                  {{ ver.version }}{{ ver.version === mod.version ? " (latest)" : "" }}
+                </option>
+              </select>
+              <span v-if="isLoadingVersions" class="text-[13px] text-muted">Loading versions…</span>
+            </div>
+          </div>
+          <p v-if="formatDownloadSize(currentVersionMod.downloadSize)" class="text-[13px] text-muted">
+            Download size <span class="readout text-ink">{{ formatDownloadSize(currentVersionMod.downloadSize) }}</span>
+          </p>
         </div>
+
+        <section>
+          <h3 class="label">Description</h3>
+          <p class="mt-2 whitespace-pre-line text-[15px] leading-relaxed">
+            {{ currentVersionMod.description || currentVersionMod.abstract || "No description provided." }}
+          </p>
+        </section>
+
+        <section v-if="safeResources.length > 0">
+          <h3 class="label">Project links</h3>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <a
+              v-for="link in safeResources"
+              :key="link.label"
+              :href="link.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn btn-secondary btn-sm"
+              :data-testid="`resource-link-${link.id}`"
+            >
+              {{ link.label }}
+              <AppIcon name="external" :size="14" class="text-muted" />
+            </a>
+          </div>
+        </section>
+
+        <section>
+          <h3 class="label">Relationships</h3>
+          <div v-if="hasRelationships" class="mt-2 space-y-3">
+            <div v-if="provides.length > 0">
+              <span class="text-[13px] text-muted">Provides:</span>
+              <ul class="mt-1.5 flex flex-wrap gap-1.5">
+                <li v-for="name in provides" :key="name" class="badge readout text-ink">{{ name }}</li>
+              </ul>
+            </div>
+            <div v-for="group in relationshipGroups" :key="group.key">
+              <span class="text-[13px]" :class="group.danger ? 'text-danger' : 'text-muted'">{{ group.label }}</span>
+              <ul class="mt-1.5 flex flex-wrap gap-1.5">
+                <li
+                  v-for="(relation, index) in group.items"
+                  :key="`${index}-${formatRelationship(relation)}`"
+                  :class="['badge readout', group.danger ? 'badge-danger' : 'text-ink']"
+                >
+                  {{ formatRelationship(relation) }}
+                </li>
+              </ul>
+            </div>
+          </div>
+          <p v-else class="mt-2 text-sm text-muted">No dependencies declared.</p>
+        </section>
+
+        <section v-if="currentVersionMod.tags.length > 0">
+          <h3 class="label">Tags</h3>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            <span v-for="tag in currentVersionMod.tags" :key="tag" class="badge">{{ tag }}</span>
+          </div>
+        </section>
       </div>
     </div>
   </div>

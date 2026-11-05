@@ -11,6 +11,9 @@ import ModFilterBar from "./ModFilterBar.vue";
 import ModPagination from "./ModPagination.vue";
 import ModTable from "./ModTable.vue";
 import ModDetailsPanel from "./ModDetailsPanel.vue";
+import AppIcon from "./AppIcon.vue";
+import ViewHeader from "./ViewHeader.vue";
+import { formatCount, formatRelativeTime } from "../format.js";
 
 const props = defineProps<{
   registry?: RegistryResponse;
@@ -96,67 +99,58 @@ function continueWithChoices(): void {
 }
 
 const offset = computed(() => props.currentPage * props.pageSize);
+
+const registryUpdated = computed(() =>
+  props.registry?.updatedAt === undefined ? undefined : formatRelativeTime(props.registry.updatedAt),
+);
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div>
-      <h1 class="text-3xl font-bold">Browse mods</h1>
-      <p class="mt-2 text-slate-300">Search the CKAN registry and manage installed mods.</p>
-    </div>
+  <div>
+    <ViewHeader title="Browse mods">
+      <template v-if="registry?.status === 'ready'">
+        Search the CKAN registry: <span class="readout">{{ formatCount(registry.moduleCount) }}</span> modules indexed<span
+          v-if="registryUpdated"
+          :title="registry.updatedAt"
+        >, updated {{ registryUpdated }}</span>.
+      </template>
+      <template v-else>Search the CKAN registry and install mods with their dependencies.</template>
+      <template #actions>
+        <button
+          :class="['btn', registry?.status === 'missing' ? 'btn-primary' : 'btn-secondary']"
+          type="button"
+          :disabled="isRefreshingRegistry"
+          @click="emit('refreshRegistry')"
+        >
+          <AppIcon name="refresh" :class="isRefreshingRegistry ? 'animate-spin' : ''" />
+          {{ isRefreshingRegistry ? "Refreshing…" : "Refresh registry" }}
+        </button>
+      </template>
+    </ViewHeader>
 
-    <section class="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-      <h2 class="font-semibold">Installed mods</h2>
-      <p v-if="installedMods.length === 0" class="mt-2 text-slate-300">No managed or detected mods yet.</p>
-      <ul v-else class="mt-3 space-y-3">
-        <li v-for="mod in installedMods" :key="mod.identifier" class="rounded-lg border border-slate-700 p-3">
-          <p class="font-semibold">
-            {{ mod.name ?? mod.identifier }}
-            <span v-if="mod.version" class="font-mono text-sm text-slate-400">{{ mod.version }}</span>
-          </p>
-          <p class="mt-1 text-sm text-slate-400">{{ mod.identifier }} · {{ mod.status }}</p>
-          <button
-            v-if="mod.status === 'managed'"
-            class="mt-3 rounded-md border border-rose-400 px-3 py-1 text-sm font-semibold text-rose-300 hover:bg-rose-400/10 disabled:opacity-60"
-            type="button"
-            :disabled="uninstallingIdentifier === mod.identifier"
-            @click="emit('uninstall', mod)"
-          >
-            {{ uninstallingIdentifier === mod.identifier ? "Uninstalling…" : "Uninstall" }}
-          </button>
-        </li>
-      </ul>
+    <section v-if="registry?.status === 'missing'" class="panel px-5 py-8">
+      <h2 class="panel-title">CKAN registry</h2>
+      <p class="mt-2 text-muted">No local metadata cache yet. Refresh to download the official CKAN-meta archive.</p>
     </section>
 
-    <section v-if="registry !== undefined" class="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-      <h2 class="font-semibold">CKAN registry</h2>
-      <p v-if="registry.status === 'missing'" class="mt-2 text-slate-300">
-        No local metadata cache yet. Refresh to download the official CKAN-meta archive.
-      </p>
-      <p v-else class="mt-2 text-slate-300">
-        {{ registry.moduleCount }} modules indexed
-        <span v-if="registry.updatedAt"> · updated {{ registry.updatedAt }}</span>
-        <span v-if="registry.parseErrors"> · {{ registry.parseErrors }} parse errors</span>
-      </p>
-      <button
-        class="mt-4 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
-        type="button"
-        :disabled="isRefreshingRegistry"
-        @click="emit('refreshRegistry')"
-      >
-        {{ isRefreshingRegistry ? "Refreshing…" : "Refresh registry" }}
-      </button>
-
-      <div v-if="registry.status === 'ready'" class="mt-6">
-        <label class="block text-sm font-medium text-slate-300" for="mod-search">Search mods</label>
-        <input
-          id="mod-search"
-          class="mt-2 w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm"
-          type="search"
-          placeholder="Name, author, or tag"
-          :value="searchQuery"
-          @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
-        />
+    <template v-if="registry?.status === 'ready'">
+      <section class="panel p-5" aria-label="Search and filters">
+        <label class="sr-only" for="mod-search">Search mods</label>
+        <div class="relative">
+          <AppIcon
+            name="search"
+            :size="18"
+            class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"
+          />
+          <input
+            id="mod-search"
+            class="field h-12 pl-11 text-[15px]"
+            type="search"
+            placeholder="Search by name, author or tag"
+            :value="searchQuery"
+            @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
         <ModFilterBar
           :selected-tag="selectedTag"
           :custom-tag="customTag"
@@ -168,10 +162,16 @@ const offset = computed(() => props.currentPage * props.pageSize);
           @update:compatible-only="emit('update:compatibleOnly', $event)"
           @reset-filters="emit('resetFilters')"
         />
-        <p class="mt-2 text-sm text-slate-400">
-          <span v-if="isSearching">Searching…</span>
-          <span v-else>{{ searchTotal }} result{{ searchTotal === 1 ? "" : "s" }}</span>
-        </p>
+      </section>
+
+      <section class="panel mt-6" aria-labelledby="results-title">
+        <div class="panel-header">
+          <h2 id="results-title" class="panel-title">Results</h2>
+          <p class="readout text-[13px] text-muted" aria-live="polite">
+            <span v-if="isSearching">Searching…</span>
+            <span v-else>{{ formatCount(searchTotal) }} result{{ searchTotal === 1 ? "" : "s" }}</span>
+          </p>
+        </div>
         <ModTable
           :mods="searchResults"
           :ksp-version="kspVersion"
@@ -189,93 +189,71 @@ const offset = computed(() => props.currentPage * props.pageSize);
           :disabled="isSearching || isRefreshingRegistry"
           @update:page="emit('update:page', $event)"
         />
-      </div>
-    </section>
+      </section>
+    </template>
 
     <div
       v-if="dependencyPrompt !== undefined"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dependency-prompt-title"
     >
-      <div
-        v-if="pendingChoices.length > 0"
-        class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl"
-      >
+      <div v-if="pendingChoices.length > 0" class="dialog">
         <h2 id="dependency-prompt-title" class="text-xl font-semibold">Choose a provider</h2>
-        <p class="mt-3 text-slate-300">
+        <p class="mt-2 text-muted">
           {{ dependencyPrompt.mod.name }} needs one of several mods. Pick the one to install.
         </p>
-        <div class="mt-4 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-          <fieldset v-for="choice in pendingChoices" :key="choice.key" class="rounded-lg border border-slate-700 p-3">
-            <legend class="px-1 text-sm font-medium text-slate-200">
-              {{ choice.label }}, required by {{ requiredByLabel(choice.requiredBy) }}
-            </legend>
+        <div class="mt-5 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+          <fieldset v-for="choice in pendingChoices" :key="choice.key" class="rounded-md border border-line p-4">
+            <legend class="px-1 text-sm font-medium">{{ choice.label }}, required by {{ requiredByLabel(choice.requiredBy) }}</legend>
             <div class="mt-1 space-y-1">
-              <div v-for="candidate in choice.candidates" :key="candidate.identifier" class="flex items-center gap-2">
+              <div
+                v-for="candidate in choice.candidates"
+                :key="candidate.identifier"
+                class="flex items-center gap-3 rounded-sm px-1 py-1.5 hover:bg-raised"
+              >
                 <input
                   :id="choiceInputId(choice.key, candidate.identifier)"
                   v-model="selectedChoices[choice.key]"
                   type="radio"
-                  class="accent-cyan-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
+                  class="h-4 w-4 accent-accent"
                   :name="`choice-${choice.key}`"
                   :value="candidate.identifier"
                 />
-                <label :for="choiceInputId(choice.key, candidate.identifier)" class="text-sm text-slate-300">
+                <label :for="choiceInputId(choice.key, candidate.identifier)" class="text-sm">
                   {{ candidate.name }}
-                  <span class="font-mono text-slate-400">{{ candidate.version }}</span>
-                  <span v-if="candidate.via === 'provides'" class="ml-1 text-xs text-slate-400">provides {{ choice.label }}</span>
+                  <span class="readout text-muted">{{ candidate.version }}</span>
+                  <span v-if="candidate.via === 'provides'" class="ml-1 text-[13px] text-muted">provides {{ choice.label }}</span>
                 </label>
               </div>
             </div>
           </fieldset>
         </div>
         <div class="mt-6 flex flex-wrap gap-3">
-          <button
-            class="rounded-md bg-cyan-500 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            :disabled="!allChoicesSelected"
-            @click="continueWithChoices"
-          >
+          <button class="btn btn-primary" type="button" :disabled="!allChoicesSelected" @click="continueWithChoices">
             Continue
           </button>
-          <button
-            class="rounded-md border border-slate-600 px-4 py-2 font-semibold text-slate-200 hover:bg-slate-800"
-            type="button"
-            @click="emit('cancelDependencyInstall')"
-          >
-            Cancel
-          </button>
+          <button class="btn btn-secondary" type="button" @click="emit('cancelDependencyInstall')">Cancel</button>
         </div>
       </div>
-      <div v-else class="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+      <div v-else class="dialog">
         <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install required dependencies?</h2>
-        <p class="mt-3 text-slate-300">
+        <p class="mt-2 text-muted">
           {{ dependencyPrompt.mod.name }} requires
           {{ missingDependencies.map((entry) => entry.name).join(", ") }}. Install them automatically?
         </p>
-        <ul class="mt-4 space-y-2 text-sm text-slate-400">
-          <li v-for="entry in missingDependencies" :key="entry.identifier">
-            {{ entry.name }}
-            <span class="font-mono">{{ entry.version }}</span>
+        <ul class="mt-4 divide-y divide-line rounded-md border border-line text-sm">
+          <li v-for="entry in missingDependencies" :key="entry.identifier" class="flex justify-between gap-3 px-3 py-2">
+            <span>{{ entry.name }}</span>
+            <span class="readout text-muted">{{ entry.version }}</span>
           </li>
         </ul>
         <div class="mt-6 flex flex-wrap gap-3">
-          <button
-            class="rounded-md bg-cyan-500 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
-            type="button"
-            @click="emit('confirmDependencyInstall')"
-          >
+          <button class="btn btn-primary" type="button" @click="emit('confirmDependencyInstall')">
             Install automatically
           </button>
-          <button
-            class="rounded-md border border-slate-600 px-4 py-2 font-semibold text-slate-200 hover:bg-slate-800"
-            type="button"
-            @click="emit('cancelDependencyInstall')"
-          >
-            Cancel
-          </button>
+          <button class="btn btn-secondary" type="button" @click="emit('cancelDependencyInstall')">Cancel</button>
         </div>
       </div>
     </div>
