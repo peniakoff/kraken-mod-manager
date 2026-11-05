@@ -1,8 +1,12 @@
 import { unzipSync } from "fflate";
 import { isSafeArchivePath, normalizeSlashPath } from "@kraken/core";
 
-/** Per-file uncompressed cap (headroom for large texture atlases). */
-export const MAX_ZIP_ENTRY_BYTES = 256 * 1024 * 1024;
+/**
+ * Per-file uncompressed cap. A single entry is decompressed whole in memory,
+ * so this bounds peak memory per entry; mods bundle files of several hundred
+ * MiB, such as the Unity Burst package in ParallaxContinued.
+ */
+export const MAX_ZIP_ENTRY_BYTES = 1024 * 1024 * 1024;
 /**
  * Whole-archive uncompressed cap. Entries are extracted in batches, so this
  * bounds disk use against zip bombs, not memory; texture packs such as
@@ -10,8 +14,11 @@ export const MAX_ZIP_ENTRY_BYTES = 256 * 1024 * 1024;
  */
 export const MAX_ZIP_TOTAL_BYTES = 8 * 1024 * 1024 * 1024;
 export const MAX_ZIP_ENTRIES = 50_000;
-/** Uncompressed bytes decompressed into memory at once during extraction. */
-export const ZIP_EXTRACT_BATCH_BYTES = MAX_ZIP_ENTRY_BYTES;
+/**
+ * Uncompressed bytes decompressed into memory at once during extraction. A
+ * single larger entry gets a batch of its own.
+ */
+export const ZIP_EXTRACT_BATCH_BYTES = 256 * 1024 * 1024;
 
 export interface ZipEntryInfo {
   /** Normalized path used for install mapping. */
