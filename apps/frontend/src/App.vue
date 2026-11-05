@@ -26,6 +26,7 @@ import {
   saveInstallation,
   planUninstall,
   searchMods,
+  serviceReachable,
   uninstallMod,
 } from "./api.js";
 import AppShell, { type AppView } from "./components/AppShell.vue";
@@ -37,7 +38,12 @@ import UninstallDialog from "./components/UninstallDialog.vue";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 import { useInstallQueue } from "./useInstallQueue.js";
 
-const status = ref<"checking" | "ready" | "unavailable" | "error">("checking");
+const status = ref<"checking" | "ready" | "unavailable">("checking");
+// The shell's status light shows the connection only. A failed operation
+// (a blocked plan, a rejected uninstall) is reported in errorMessage alone.
+const serviceStatus = computed(() =>
+  status.value === "ready" && !serviceReachable.value ? "unavailable" : status.value,
+);
 const version = ref<string>();
 const installation = ref<KspInstallation>();
 const candidates = ref<KspInstallation[]>([]);
@@ -75,7 +81,6 @@ const installQueue = useInstallQueue({
   },
   onFailed: (job) => {
     errorMessage.value = job.error ?? "Install failed.";
-    status.value = "error";
   },
 });
 const {
@@ -99,6 +104,10 @@ const effectiveTag = computed(() => {
   const selected = selectedTag.value.trim();
   return selected.length > 0 ? selected : undefined;
 });
+
+function reportError(error: unknown, fallback: string): void {
+  errorMessage.value = error instanceof Error ? error.message : fallback;
+}
 
 async function loadSetup(): Promise<void> {
   status.value = "checking";
@@ -160,8 +169,7 @@ async function refreshInstalledState(): Promise<void> {
   try {
     await Promise.all([loadInstalledMods(), loadUpdates()]);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Installed mods could not be refreshed.";
-    status.value = "error";
+    reportError(error, "Installed mods could not be refreshed.");
   }
 }
 
@@ -184,8 +192,7 @@ async function selectInstallation(path: string): Promise<void> {
       await loadConfiguredState(config.installation);
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "The installation could not be saved.";
-    status.value = "error";
+    reportError(error, "The installation could not be saved.");
   } finally {
     isSaving.value = false;
   }
@@ -196,8 +203,7 @@ async function openBrowser(path?: string): Promise<void> {
   try {
     directoryListing.value = await getDirectories(path);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "The directory browser could not be opened.";
-    status.value = "error";
+    reportError(error, "The directory browser could not be opened.");
   }
 }
 
@@ -221,8 +227,7 @@ async function onRefreshRegistry(): Promise<void> {
     await loadInstalledMods();
     await loadUpdates();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "The registry could not be refreshed.";
-    status.value = "error";
+    reportError(error, "The registry could not be refreshed.");
   } finally {
     isRefreshingRegistry.value = false;
   }
@@ -245,8 +250,7 @@ async function runSearch(active?: KspInstallation): Promise<void> {
     searchResults.value = result.mods;
     searchTotal.value = result.total;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Mod search failed.";
-    status.value = "error";
+    reportError(error, "Mod search failed.");
   } finally {
     isSearching.value = false;
   }
@@ -325,8 +329,7 @@ async function planAndApply(mod: CkanModule, choices: Record<string, string>): P
     const plan = await planModInstall(mod.identifier, mod.version, choices);
     await applyPlan(mod, plan, choices);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Install could not be planned.";
-    status.value = "error";
+    reportError(error, "Install could not be planned.");
     setInstallPending(mod.identifier, false);
   }
 }
@@ -338,7 +341,6 @@ async function applyPlan(mod: CkanModule, plan: InstallPlanResponse, choices: Re
       ...plan.unmet.map((entry) => entry.message),
     ].join(" ");
     errorMessage.value = details.length > 0 ? details : "Install plan is blocked by dependencies or conflicts.";
-    status.value = "error";
     setInstallPending(mod.identifier, false);
     return;
   }
@@ -395,8 +397,7 @@ async function startInstallJob(
     const accepted = await installMod(mod.identifier, mod.version, installDependencies, choices);
     addInstallJob(accepted.job);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Install could not be started.";
-    status.value = "error";
+    reportError(error, "Install could not be started.");
   } finally {
     setInstallPending(mod.identifier, false);
   }
@@ -416,8 +417,7 @@ async function onUpdate(update: AvailableUpdate): Promise<void> {
   try {
     await onInstall(await findUpdateModule(update));
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Update could not be started.";
-    status.value = "error";
+    reportError(error, "Update could not be started.");
   }
 }
 
@@ -454,7 +454,6 @@ async function onUpdateAll(): Promise<void> {
   }
   if (skipped.length > 0) {
     errorMessage.value = `Some updates were skipped: ${skipped.join("; ")}`;
-    status.value = "error";
   }
 }
 
@@ -467,8 +466,7 @@ async function onUninstall(mod: InstalledMod): Promise<void> {
   try {
     uninstallPrompt.value = { mod, plan: await planUninstall(mod.identifier) };
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Uninstall could not be planned.";
-    status.value = "error";
+    reportError(error, "Uninstall could not be planned.");
   } finally {
     uninstallingIdentifier.value = undefined;
   }
@@ -548,7 +546,7 @@ onMounted(loadSetup);
     v-else
     :active-view="activeView"
     :service-version="version"
-    :status="status"
+    :status="serviceStatus"
     :error-message="errorMessage"
     :install-jobs="installJobs"
     :installed-count="installedMods.length"

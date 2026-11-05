@@ -10,7 +10,7 @@ export type AppView = "dashboard" | "installed" | "browse";
 const props = defineProps<{
   activeView: AppView;
   serviceVersion?: string;
-  status: "checking" | "ready" | "unavailable" | "error";
+  status: "checking" | "ready" | "unavailable";
   errorMessage?: string;
   installJobs: JobResponse[];
   installedCount: number;
@@ -46,7 +46,7 @@ const serviceText = computed(() => {
   if (props.status === "ready") {
     return `Service connected${props.serviceVersion ? ` (${props.serviceVersion})` : ""}`;
   }
-  return props.errorMessage ?? "Local service is unavailable.";
+  return "Local service is unavailable.";
 });
 
 const registryText = computed(() => {
@@ -136,7 +136,7 @@ const registryText = computed(() => {
     <main id="main" tabindex="-1" class="min-w-0 px-4 py-6 outline-none md:px-10 md:py-10">
       <div class="mx-auto max-w-6xl">
         <p
-          v-if="errorMessage !== undefined && (status === 'error' || status === 'unavailable')"
+          v-if="errorMessage !== undefined"
           class="panel mb-6 flex items-start gap-3 border-danger/40 px-4 py-3 text-sm text-danger"
           role="alert"
         >

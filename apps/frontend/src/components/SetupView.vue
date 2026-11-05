@@ -4,7 +4,7 @@ import PathText from "./PathText.vue";
 import type { DirectoryListingResponse, KspInstallation } from "@kraken/contracts";
 
 defineProps<{
-  status: "checking" | "ready" | "unavailable" | "error";
+  status: "checking" | "ready" | "unavailable";
   serviceVersion?: string;
   errorMessage?: string;
   candidates: KspInstallation[];
@@ -41,14 +41,22 @@ defineEmits<{
           :class="{
             'text-warn': status === 'checking',
             'text-ok': status === 'ready',
-            'text-danger': status === 'unavailable' || status === 'error',
+            'text-danger': status === 'unavailable',
           }"
           aria-hidden="true"
         />
         <span v-if="status === 'checking'">Checking local service…</span>
         <span v-else-if="status === 'ready'">Service connected ({{ serviceVersion }})</span>
-        <span v-else>{{ errorMessage ?? "Local service is unavailable." }}</span>
+        <span v-else>Local service is unavailable.</span>
       </div>
+      <p
+        v-if="errorMessage !== undefined"
+        class="mt-3 flex items-start gap-3 rounded-md border border-danger/40 px-4 py-3 text-sm text-danger"
+        role="alert"
+      >
+        <AppIcon name="alert" :size="18" class="mt-0.5" />
+        <span>{{ errorMessage }}</span>
+      </p>
 
       <section v-if="status === 'ready'" class="mt-8">
         <h2 class="panel-title">Detected installations</h2>
