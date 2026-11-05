@@ -134,6 +134,62 @@ function fixtureMetaArchive(
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "AnotherMod" }],
       }),
     },
+    ...["1.0.0", "2.0.0"].map((version) => ({
+      path: `CKAN-meta-master/ExamplePack/ExamplePack-${version}.ckan`,
+      content: JSON.stringify({
+        identifier: "ExamplePack",
+        name: "Example Pack",
+        author: "Tester",
+        version,
+        kind: "metapackage",
+        tags: ["plugin"],
+        depends: [{ name: "ModuleManager" }, { name: "AnotherMod" }],
+      }),
+    })),
+    {
+      path: "CKAN-meta-master/NestedPack/NestedPack-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "NestedPack",
+        name: "Nested Pack",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        depends: [{ name: "ExamplePack" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "NestedPack" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/NeedsBare/NeedsBare-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "NeedsBare",
+        name: "Needs Bare",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        depends: [{ name: "DetectedOnly" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "NeedsBare" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/DlcThing/DlcThing-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "DlcThing",
+        name: "Dlc Thing",
+        author: "Tester",
+        version: "1.0.0",
+        kind: "dlc",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+      }),
+    },
     {
       path: "CKAN-meta-master/LegacyMod/LegacyMod-1.0.0.ckan",
       content: JSON.stringify({
@@ -1516,5 +1572,91 @@ describe("interrupted install recovery", () => {
     expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("failed");
 
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+  });
+});
+
+describe("metapackages", () => {
+  it("installs a metapackage as a file-less record with automatic dependencies", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExamplePack/install").send({});
+    expect(accepted.status).toBe(202);
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(true);
+    expect(existsSync(join(ksp, "GameData", "AnotherMod"))).toBe(true);
+    expect(manifestRecord(home, "ExamplePack")).toMatchObject({ files: [], autoInstalled: false });
+    expect(manifestRecord(home, "ModuleManager")).toMatchObject({ autoInstalled: true });
+    expect(manifestRecord(home, "AnotherMod")).toMatchObject({ autoInstalled: true });
+    const inventory = await request(app).get("/api/v1/installed-mods");
+    expect(inventory.body.mods).toContainEqual(
+      expect.objectContaining({ identifier: "ExamplePack", status: "managed" }),
+    );
+  });
+
+  it("installs a mod that depends on a metapackage", async () => {
+    const { app, home } = await createInstallTestApp();
+    await installWithDependencies(app, "NestedPack");
+
+    expect(manifestRecord(home, "ExamplePack")).toMatchObject({ files: [], autoInstalled: true });
+    expect(manifestRecord(home, "NestedPack")).toMatchObject({ autoInstalled: false });
+  });
+
+  it("offers a newer metapackage as an update", async () => {
+    const { app } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExamplePack/install").send({ version: "1.0.0" });
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    const updates = await request(app).get("/api/v1/updates");
+    expect(updates.body.updates).toContainEqual(
+      expect.objectContaining({ identifier: "ExamplePack", installedVersion: "1.0.0", availableVersion: "2.0.0" }),
+    );
+  });
+
+  it("offers a metapackage's dependencies as orphans when it is uninstalled", async () => {
+    const { app } = await createInstallTestApp();
+    const accepted = await request(app).post("/api/v1/mods/ExamplePack/install").send({});
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    const plan = await request(app).post("/api/v1/mods/ExamplePack/uninstall-plan").send({});
+    expect(plan.status).toBe(200);
+    expect(plan.body.orphans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ identifier: "ModuleManager" }),
+        expect.objectContaining({ identifier: "AnotherMod" }),
+      ]),
+    );
+  });
+
+  it("rolls back an interrupted install after a metapackage was recorded", async () => {
+    // Install order: ModuleManager (extract 1), AnotherMod (2), ExamplePack
+    // (recorded, no extraction), NestedPack (3, crashes).
+    const zip = new CrashingZip(3, 1);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    await startCrashingInstall(app, zip, "NestedPack", { installDependencies: true });
+    expect(manifestRecord(home, "ExamplePack")).toMatchObject({ files: [] });
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles(ksp);
+
+    expect(readManifestFile(home).mods).toEqual([]);
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
+    expect(existsSync(join(ksp, "GameData", "AnotherMod"))).toBe(false);
+    expect(existsSync(join(ksp, "GameData", "NestedPack"))).toBe(false);
+  });
+
+  it("still rejects a regular dependency without a download", async () => {
+    const { app } = await createInstallTestApp();
+    const response = await request(app).post("/api/v1/mods/NeedsBare/install").send({ installDependencies: true });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(response.body.code).toBe("NO_DOWNLOAD");
+  });
+
+  it("does not install DLC", async () => {
+    const { app } = await createInstallTestApp();
+    const response = await request(app).post("/api/v1/mods/DlcThing/install").send({});
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(response.body.code).toBe("NO_DOWNLOAD");
   });
 });
