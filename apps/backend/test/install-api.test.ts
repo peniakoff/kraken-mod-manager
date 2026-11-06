@@ -1214,7 +1214,7 @@ describe("mod install API", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
 
       expect(readdirSync(downloads)).toEqual(["notes.txt"]);
       expect(readFileSync(join(backup, "file.cfg"), "utf8")).toBe("user data");
@@ -1266,6 +1266,14 @@ async function startCrashingInstall(
   return accepted.body.job.jobId;
 }
 
+function createKspFolder(home: string, name: string): string {
+  const path = join(home, name);
+  mkdirSync(join(path, "GameData"), { recursive: true });
+  writeFileSync(join(path, "KSP.x86_64"), "");
+  writeFileSync(join(path, "readme.txt"), "Version 1.12.5");
+  return path;
+}
+
 function writeJournal(ksp: string, jobId: string, lines: readonly object[]): string {
   const backupRoot = join(ksp, ".kraken-backup");
   mkdirSync(backupRoot, { recursive: true });
@@ -1285,7 +1293,7 @@ function ageJournal(path: string): void {
 describe("interrupted install recovery", () => {
   it("reports nothing when no install was interrupted", async () => {
     const { app, installService, ksp } = await createInstallTestApp();
-    await installService.cleanupTemporaryFiles(ksp);
+    await installService.cleanupTemporaryFiles([ksp]);
 
     const report = await request(app).get("/api/v1/install-recovery");
     expect(report.status).toBe(200);
@@ -1299,7 +1307,7 @@ describe("interrupted install recovery", () => {
     expect(readdirSync(join(ksp, "GameData", "ExampleMod"))).toHaveLength(1);
 
     const restarted = restart();
-    await restarted.installService.cleanupTemporaryFiles(ksp);
+    await restarted.installService.cleanupTemporaryFiles([ksp]);
 
     expect(existsSync(join(ksp, "GameData", "ExampleMod"))).toBe(false);
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
@@ -1312,6 +1320,75 @@ describe("interrupted install recovery", () => {
       failed: [],
       activeInstallationPath: realpathSync(ksp),
     });
+  });
+
+  it("undoes an interrupted install in an installation that is not active", async () => {
+    const zip = new CrashingZip(1, 1);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    const jobId = await startCrashingInstall(app, zip, "ExampleMod");
+    const otherKsp = createKspFolder(home, "OtherKSP");
+    await request(app).put("/api/v1/config").send({ installationPath: otherKsp });
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles([otherKsp, ksp]);
+
+    expect(existsSync(join(ksp, "GameData", "ExampleMod"))).toBe(false);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+    expect(restarted.installService.getRecoveryReport()).toEqual({
+      rolledBack: [
+        { jobId, installationPath: realpathSync(ksp), modules: [{ identifier: "ExampleMod", name: "Example Mod" }] },
+      ],
+      failed: [],
+      activeInstallationPath: realpathSync(otherKsp),
+    });
+  });
+
+  it("recovers an installation listed in two spellings once", async () => {
+    const zip = new CrashingZip(1, 1);
+    const { app, ksp, restart } = await createInstallTestApp({ zip });
+    await startCrashingInstall(app, zip, "ExampleMod");
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles([`${ksp}/`, ksp, realpathSync(ksp)]);
+
+    const report = restarted.installService.getRecoveryReport();
+    expect(report.rolledBack).toHaveLength(1);
+    expect(report.failed).toEqual([]);
+    expect(report.activeInstallationPath).toBe(realpathSync(ksp));
+  });
+
+  it("skips an installation folder that no longer exists", async () => {
+    const { installService, home, ksp } = await createInstallTestApp();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await installService.cleanupTemporaryFiles([ksp, join(home, "Gone")]);
+
+      expect(info).toHaveBeenCalledWith(expect.stringContaining(join(home, "Gone")));
+    } finally {
+      info.mockRestore();
+    }
+    expect(installService.getRecoveryReport()).toEqual({
+      rolledBack: [],
+      failed: [],
+      activeInstallationPath: realpathSync(ksp),
+    });
+  });
+
+  it("keeps recovering other installations when one fails", async () => {
+    const zip = new CrashingZip(1, 1);
+    const { app, home, ksp, restart } = await createInstallTestApp({ zip });
+    const jobId = await startCrashingInstall(app, zip, "ExampleMod");
+    const brokenKsp = createKspFolder(home, "BrokenKSP");
+    writeFileSync(join(brokenKsp, ".kraken-backup"), "not a directory");
+
+    const restarted = restart();
+    await restarted.installService.cleanupTemporaryFiles([brokenKsp, ksp]);
+
+    expect(existsSync(join(ksp, "GameData", "ExampleMod"))).toBe(false);
+    const report = restarted.installService.getRecoveryReport();
+    expect(report.rolledBack.map((entry) => entry.jobId)).toEqual([jobId]);
+    expect(report.failed).toEqual([{ installationPath: brokenKsp, message: expect.any(String) }]);
+    expect(report.activeInstallationPath).toBe(realpathSync(brokenKsp));
   });
 
   it("brings back the previous version after an interrupted update", async () => {
@@ -1331,7 +1408,7 @@ describe("interrupted install recovery", () => {
 
     const jobId = await startCrashingInstall(app, zip, "NoHashMod");
     const restarted = restart();
-    await restarted.installService.cleanupTemporaryFiles(ksp);
+    await restarted.installService.cleanupTemporaryFiles([ksp]);
 
     expect(readFileSync(join(ksp, "GameData", "NoHashMod", "readme.txt"), "utf8")).toBe("edited by the user");
     expect(readFileSync(join(ksp, "GameData", "NoHashMod", "plugin.dll"), "utf8")).toBe("fake-dll");
@@ -1356,7 +1433,7 @@ describe("interrupted install recovery", () => {
     await startCrashingInstall(app, zip, "ExampleMod");
     expect(existsSync(join(ksp, "GameData", "ExampleMod", "readme.txt"))).toBe(false);
     const restarted = restart();
-    await restarted.installService.cleanupTemporaryFiles(ksp);
+    await restarted.installService.cleanupTemporaryFiles([ksp]);
 
     expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
     expect(readFileSync(join(ksp, "GameData", "ExampleMod", "plugin.dll"), "utf8")).toBe("fake-dll");
@@ -1370,7 +1447,7 @@ describe("interrupted install recovery", () => {
     expect(manifestRecord(home, "ModuleManager").version).toBe("4.2.3");
 
     const restarted = restart();
-    await restarted.installService.cleanupTemporaryFiles(ksp);
+    await restarted.installService.cleanupTemporaryFiles([ksp]);
 
     expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
     expect(existsSync(join(ksp, "GameData", "DependentMod"))).toBe(false);
@@ -1402,7 +1479,7 @@ describe("interrupted install recovery", () => {
     ]);
     const recordBefore = manifestRecord(home, "ExampleMod");
 
-    await installService.cleanupTemporaryFiles(ksp);
+    await installService.cleanupTemporaryFiles([ksp]);
 
     expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
     expect(readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"), "utf8")).toContain("hello from ExampleMod");
@@ -1423,7 +1500,7 @@ describe("interrupted install recovery", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
     } finally {
       warn.mockRestore();
     }
@@ -1449,7 +1526,7 @@ describe("interrupted install recovery", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
     } finally {
       warn.mockRestore();
     }
@@ -1471,7 +1548,7 @@ describe("interrupted install recovery", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
     } finally {
       warn.mockRestore();
     }
@@ -1491,7 +1568,7 @@ describe("interrupted install recovery", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
     } finally {
       info.mockRestore();
     }
@@ -1512,7 +1589,7 @@ describe("interrupted install recovery", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp);
+      await installService.cleanupTemporaryFiles([ksp]);
     } finally {
       info.mockRestore();
     }
@@ -1536,7 +1613,7 @@ describe("interrupted install recovery", () => {
     mkdirSync(join(ksp, "GameData", "Mod"), { recursive: true });
     writeFileSync(join(ksp, "GameData", "Mod", "file.cfg"), "left by the dead job");
 
-    await installService.cleanupTemporaryFiles(ksp, { recheckDelayMs: 50 });
+    await installService.cleanupTemporaryFiles([ksp], { recheckDelayMs: 50 });
 
     expect(existsSync(join(ksp, "GameData", "Mod", "file.cfg"))).toBe(false);
     expect(existsSync(journal)).toBe(false);
@@ -1560,7 +1637,7 @@ describe("interrupted install recovery", () => {
     }, 20);
 
     try {
-      await installService.cleanupTemporaryFiles(ksp, { recheckDelayMs: 150 });
+      await installService.cleanupTemporaryFiles([ksp], { recheckDelayMs: 150 });
     } finally {
       clearTimeout(heartbeat);
       warn.mockRestore();
@@ -1577,7 +1654,7 @@ describe("interrupted install recovery", () => {
     const { installService, ksp } = await createInstallTestApp();
     const journal = writeJournal(ksp, "0b1c2d3e-0000-4000-8000-000000000012", [JOURNAL_HEADER]);
 
-    await installService.cleanupTemporaryFiles(ksp);
+    await installService.cleanupTemporaryFiles([ksp]);
 
     expect(existsSync(journal)).toBe(true);
     expect(installService.getRecoveryReport()).toEqual({
@@ -1659,7 +1736,7 @@ describe("metapackages", () => {
     expect(manifestRecord(home, "ExamplePack")).toMatchObject({ files: [] });
 
     const restarted = restart();
-    await restarted.installService.cleanupTemporaryFiles(ksp);
+    await restarted.installService.cleanupTemporaryFiles([ksp]);
 
     expect(readManifestFile(home).mods).toEqual([]);
     expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);

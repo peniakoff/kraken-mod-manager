@@ -40,8 +40,12 @@ moves it back if the job fails. Every job also writes an append-only journal,
 before that module's files move, a `file` line before each destination is
 written, and `committed` once every module is in place.
 
-At startup, before the server accepts requests, an uncommitted journal is
-undone newest module first: recorded files are deleted, the backup folder is
+At startup, before the server accepts requests, every installation Kraken has
+managed is recovered: the active one first, then each path in the configuration's
+`knownInstallationPaths`. Paths are resolved with `realpath` and deduplicated on
+the canonical form, a folder that no longer exists is skipped, and a failure in
+one installation is reported for it without stopping the others. In each
+installation an uncommitted journal is undone newest module first: recorded files are deleted, the backup folder is
 moved back and the manifest record is restored. A committed journal only has
 its backups deleted. Because file lines precede the writes, recovery never
 deletes a file the job did not create; the cost is that a file being written

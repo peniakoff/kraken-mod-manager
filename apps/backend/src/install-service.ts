@@ -819,7 +819,7 @@ export class InstallService {
    * trusting a stale heartbeat of a live process; tests shorten it.
    */
   async cleanupTemporaryFiles(
-    kspPath?: string,
+    kspPaths: readonly string[],
     { recheckDelayMs = JOURNAL_HEARTBEAT_MS + 5_000 }: { recheckDelayMs?: number } = {},
   ): Promise<void> {
     let names: string[] = [];
@@ -836,11 +836,40 @@ export class InstallService {
       }
     }
 
-    if (kspPath === undefined) {
-      return;
+    // Paths are canonicalised before deduplicating, so one installation written
+    // in two forms is recovered once. The first path is the active installation.
+    const seen = new Set<string>();
+    for (const [index, kspPath] of kspPaths.entries()) {
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = await this.fileSystem.realpath(kspPath);
+      } catch (error: unknown) {
+        if (isMissingFile(error)) {
+          console.info(`Skipping startup recovery for ${kspPath}: the folder no longer exists.`);
+        } else {
+          this.recoveryReport.failed.push({ installationPath: kspPath, message: errorMessage(error) });
+          console.warn(`Could not recover installation ${kspPath}: ${errorMessage(error)}`);
+        }
+        continue;
+      }
+      if (index === 0) {
+        this.recoveryReport.activeInstallationPath = canonicalRoot;
+      }
+      if (seen.has(canonicalRoot)) {
+        continue;
+      }
+      seen.add(canonicalRoot);
+      try {
+        await this.recoverInstallation(canonicalRoot, recheckDelayMs);
+      } catch (error: unknown) {
+        this.recoveryReport.failed.push({ installationPath: kspPath, message: errorMessage(error) });
+        console.warn(`Could not recover installation ${kspPath}: ${errorMessage(error)}`);
+      }
     }
-    const canonicalRoot = await this.fileSystem.realpath(kspPath);
-    this.recoveryReport.activeInstallationPath = canonicalRoot;
+  }
+
+  /** Journal recovery and the untracked-backup check for one canonical installation root. */
+  private async recoverInstallation(canonicalRoot: string, recheckDelayMs: number): Promise<void> {
     const backupRoot = join(canonicalRoot, BACKUP_DIRECTORY);
     const tracked = new Set<string>();
     for (const name of await readDirectoryNames(backupRoot)) {

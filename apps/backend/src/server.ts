@@ -50,7 +50,8 @@ async function start(): Promise<void> {
   // Runs before the server accepts requests, so no install can be active.
   try {
     const config = await dependencies.configStore.read();
-    await dependencies.installService.cleanupTemporaryFiles(config?.activeInstallationPath);
+    const kspPaths = config === undefined ? [] : [config.activeInstallationPath, ...config.knownInstallationPaths];
+    await dependencies.installService.cleanupTemporaryFiles([...new Set(kspPaths)]);
   } catch (error: unknown) {
     console.warn(`Could not clean up temporary install files: ${error instanceof Error ? error.message : String(error)}`);
   }

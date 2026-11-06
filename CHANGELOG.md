@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Metapackages (CKAN modules that only bundle other mods) can be installed: Kraken installs the mods they list and records the metapackage, so it can be updated and uninstalled, and uninstalling it offers to remove the mods it brought in.
 
+### Fixed
+- Interrupted installs are now undone at startup in every KSP installation Kraken has managed, not only the active one; the notice names the installation.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added
