@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-06
+
 ### Added
 - Modpacks can be imported from a CKAN .ckan file (for example one made with CKAN's "Export modpack"): Kraken keeps the imported metapackage, installs the mods it lists, and marks it as Imported in the mod list.
 - Metapackages (CKAN modules that only bundle other mods) can be installed: Kraken installs the mods they list and records the metapackage, so it can be updated and uninstalled, and uninstalling it offers to remove the mods it brought in.
@@ -16,10 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Interrupted installs are now undone at startup in every KSP installation Kraken has managed, not only the active one; the notice names the installation.
+- DLC entries in the registry (such as Breaking Ground) are recognised as DLC: they have no Install button, and a mod that depends on one reports that Kraken cannot install DLC instead of a missing download.
 
 ### Known limitations
 - Going back to 0.6.0 after running 0.7.0: the older version cannot read the new configuration file. Close Kraken, delete config.json from the Kraken config folder, start it again and choose the installation.
 - If the CKAN registry later gains a mod with the same identifier as an imported modpack, the registry mod replaces it in the mod list and is offered as its update.
+- Binaries are still not code-signed, so Gatekeeper and Windows SmartScreen may warn on first launch.
+- The official CKAN registry currently contains no metapackages; they come from imported modpack files.
 
 ## [0.6.0] - 2026-11-05
 
