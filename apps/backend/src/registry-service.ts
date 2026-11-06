@@ -6,9 +6,11 @@ import {
   type CkanModule,
   type CkanSearchOptions,
   type CkanSearchResult,
+  parseCkanDocument,
   type HttpPort,
   type RegistrySnapshot,
 } from "@kraken/core";
+import { ImportedModpackStore } from "./adapters/imported-modpack-store.js";
 import { RegistryCacheStore, RegistryCacheError } from "./adapters/registry-cache-store.js";
 
 export const DEFAULT_CKAN_META_URL = "https://github.com/KSP-CKAN/CKAN-meta/archive/master.tar.gz";
@@ -16,7 +18,7 @@ export const DEFAULT_CKAN_META_URL = "https://github.com/KSP-CKAN/CKAN-meta/arch
 export class RegistryServiceError extends Error {
   constructor(
     message: string,
-    readonly code: "REGISTRY_REFRESH_FAILED" | "REGISTRY_CACHE_ERROR",
+    readonly code: "REGISTRY_REFRESH_FAILED" | "REGISTRY_CACHE_ERROR" | "INVALID_MODPACK",
   ) {
     super(message);
     this.name = "RegistryServiceError";
@@ -40,6 +42,7 @@ export class RegistryService {
     private readonly http: HttpPort,
     private readonly archive: ArchivePort,
     private readonly cacheStore: RegistryCacheStore,
+    private readonly importedStore: ImportedModpackStore,
     private readonly sourceUrl: string = DEFAULT_CKAN_META_URL,
   ) {}
 
@@ -105,7 +108,7 @@ export class RegistryService {
     try {
       const snapshot = await refreshRegistry(this.http, this.archive, this.sourceUrl);
       await this.cacheStore.write(snapshot);
-      this.applySnapshot(snapshot);
+      this.applySnapshot(snapshot, await this.readImports());
       // The registry in memory is now newer than anything a pending or later
       // cache read could load.
       this.loadPromise = Promise.resolve();
@@ -121,20 +124,67 @@ export class RegistryService {
     }
   }
 
+  /**
+   * Parses a CKAN modpack file into a metapackage and adds it to the index.
+   * Download information is dropped: an imported file must never decide what
+   * gets downloaded, only which registry mods get installed.
+   */
+  async importModpack(contents: string): Promise<CkanModule> {
+    await this.ensureLoaded();
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(contents);
+    } catch {
+      throw new RegistryServiceError("The modpack file is not valid JSON.", "INVALID_MODPACK");
+    }
+    const parsed = parseCkanDocument(raw);
+    if (parsed === undefined) {
+      throw new RegistryServiceError(
+        "The modpack file is missing an identifier, name or version.",
+        "INVALID_MODPACK",
+      );
+    }
+    if (parsed.kind !== "metapackage") {
+      throw new RegistryServiceError("The modpack file is not a CKAN metapackage.", "INVALID_MODPACK");
+    }
+    if (this.snapshot?.modules.some((module) => module.identifier === parsed.identifier)) {
+      throw new RegistryServiceError(
+        `${parsed.identifier} is a mod in the CKAN registry and cannot be replaced by an imported file.`,
+        "INVALID_MODPACK",
+      );
+    }
+
+    const { download: _download, downloadMirrors: _downloadMirrors, ...rest } = parsed;
+    const module: CkanModule = { ...rest, source: "imported" };
+    const imports = await this.importedStore.save(module);
+    this.applySnapshot(this.snapshot, imports);
+    return module;
+  }
+
   private async loadFromCache(): Promise<void> {
     try {
       const cache = await this.cacheStore.read();
-      // A refresh that finished while the file was being read has newer data.
-      if (cache === undefined || this.snapshot !== undefined) {
+      const imports = await this.readImports();
+      // A refresh that finished while the files were being read has newer data.
+      if (this.snapshot !== undefined) {
         return;
       }
-      this.applySnapshot({
-        modules: cache.modules as CkanModule[],
-        parseErrors: cache.parseErrors,
-        sourceUrl: cache.sourceUrl,
-        updatedAt: cache.updatedAt,
-      });
+      this.applySnapshot(
+        cache === undefined
+          ? undefined
+          : {
+              modules: cache.modules as CkanModule[],
+              parseErrors: cache.parseErrors,
+              sourceUrl: cache.sourceUrl,
+              updatedAt: cache.updatedAt,
+            },
+        imports,
+      );
     } catch (error: unknown) {
+      if (error instanceof RegistryServiceError) {
+        throw error;
+      }
       throw new RegistryServiceError(
         error instanceof Error ? error.message : "Could not load registry cache.",
         "REGISTRY_CACHE_ERROR",
@@ -142,8 +192,25 @@ export class RegistryService {
     }
   }
 
-  private applySnapshot(snapshot: RegistrySnapshot): void {
+  private async readImports(): Promise<CkanModule[]> {
+    try {
+      return await this.importedStore.read();
+    } catch (error: unknown) {
+      throw new RegistryServiceError(
+        error instanceof Error ? error.message : "Could not load imported modpacks.",
+        "REGISTRY_CACHE_ERROR",
+      );
+    }
+  }
+
+  /** Imports whose identifier the registry also has are hidden, never overriding a registry mod. */
+  private applySnapshot(snapshot: RegistrySnapshot | undefined, imports: readonly CkanModule[]): void {
     this.snapshot = snapshot;
-    this.index = new CkanIndex(snapshot.modules);
+    const registryModules = snapshot?.modules ?? [];
+    const registryIdentifiers = new Set(registryModules.map((module) => module.identifier));
+    const visibleImports = imports
+      .filter((module) => !registryIdentifiers.has(module.identifier))
+      .map((module): CkanModule => ({ ...module, source: "imported" }));
+    this.index = new CkanIndex([...registryModules, ...visibleImports]);
   }
 }

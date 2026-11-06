@@ -9,6 +9,8 @@ import {
   installRecoveryReportSchema,
   installedModsResponseSchema,
   installationsResponseSchema,
+  importModpackRequestSchema,
+  importModpackResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
   modDetailsResponseSchema,
@@ -37,6 +39,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigStore, ConfigStoreError } from "./adapters/config-store.js";
 import { InstallManifestStore, InstallManifestError } from "./adapters/install-manifest-store.js";
+import { ImportedModpackStore, ImportedModpackStoreError } from "./adapters/imported-modpack-store.js";
 import { NodeFileSystem } from "./adapters/node-file-system.js";
 import { NodeHttp } from "./adapters/node-http.js";
 import { RegistryCacheStore, RegistryCacheError } from "./adapters/registry-cache-store.js";
@@ -61,6 +64,7 @@ import {
   getBrowseRoots,
   getConfigFilePath,
   getDownloadCacheDirectory,
+  getImportedModpacksFilePath,
   getInstallManifestFilePath,
   getPlatformPort,
   getRegistryCacheFilePath,
@@ -89,6 +93,7 @@ export function createDefaultDependencies(frontendDirectory = process.env.KMM_FR
     new NodeHttp(),
     new TarGzArchive(),
     new RegistryCacheStore(getRegistryCacheFilePath(platform)),
+    new ImportedModpackStore(getImportedModpacksFilePath(platform)),
   );
   const dependencies: AppDependencies = {
     fileSystem: new NodeFileSystem(),
@@ -116,7 +121,12 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
   const app = express();
 
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "100kb" }));
+  // Modpack files can be large; every other route keeps the small limit.
+  const defaultJson = express.json({ limit: "100kb" });
+  const modpackJson = express.json({ limit: "1mb" });
+  app.use((request, response, next) => {
+    (request.path === "/api/v1/modpacks" ? modpackJson : defaultJson)(request, response, next);
+  });
 
   app.get("/api/v1/health", (_request, response) => {
     response.json(healthResponseSchema.parse({ status: "ok", version }));
@@ -259,6 +269,21 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       }
       const result = dependencies.registryService.search(searchOptions);
       response.json(modsResponseSchema.parse(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/modpacks", async (request, response, next) => {
+    const body = importModpackRequestSchema.safeParse(request.body);
+    if (!body.success) {
+      sendError(response, 400, "INVALID_REQUEST", "A modpack file is required.");
+      return;
+    }
+
+    try {
+      const mod = await dependencies.registryService.importModpack(body.data.contents);
+      response.json(importModpackResponseSchema.parse({ mod }));
     } catch (error) {
       next(error);
     }
@@ -587,7 +612,16 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
       return;
     }
     if (error instanceof RegistryServiceError) {
-      sendError(response, error.code === "REGISTRY_REFRESH_FAILED" ? 503 : 500, error.code, error.message);
+      const status = error.code === "REGISTRY_REFRESH_FAILED" ? 503 : error.code === "INVALID_MODPACK" ? 400 : 500;
+      sendError(response, status, error.code, error.message);
+      return;
+    }
+    if (error instanceof ImportedModpackStoreError) {
+      sendError(response, 500, "IMPORTED_MODPACKS_ERROR", error.message);
+      return;
+    }
+    if (isPayloadTooLarge(error)) {
+      sendError(response, 413, "PAYLOAD_TOO_LARGE", "The request body is too large.");
       return;
     }
     if (error instanceof InstallManifestError) {
@@ -636,6 +670,10 @@ async function requireConfiguredKspInstallation(dependencies: AppDependencies): 
     config.activeInstallationPath,
     "manual",
   );
+}
+
+function isPayloadTooLarge(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "type" in error && error.type === "entity.too.large";
 }
 
 function sendError(response: express.Response, status: number, code: string, message: string): void {

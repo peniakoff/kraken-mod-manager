@@ -48,6 +48,16 @@ describe("ImportedModpackStore", () => {
     expect(saved.find((module) => module.version === "2.0")?.abstract).toBe("A pack");
   });
 
+  it("keeps both modules when two saves run at the same time", async () => {
+    const filePath = await newFilePath();
+    const store = new ImportedModpackStore(filePath);
+
+    await Promise.all([store.save(pack("1.0")), store.save(pack("2.0"))]);
+
+    const versions = (await store.read()).map((module) => module.version).sort();
+    expect(versions).toEqual(["1.0", "2.0"]);
+  });
+
   it("rejects a malformed file", async () => {
     const filePath = await newFilePath();
     const store = new ImportedModpackStore(filePath);

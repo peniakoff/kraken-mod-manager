@@ -16,6 +16,8 @@ export class ImportedModpackStoreError extends Error {
 
 /** Persists metapackages created from imported modpacks, one entry per identifier and version. */
 export class ImportedModpackStore {
+  private saveQueue: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly filePath: string) {}
 
   async read(): Promise<CkanModule[]> {
@@ -44,7 +46,15 @@ export class ImportedModpackStore {
   }
 
   /** Replaces the entry with the same identifier and version, otherwise appends; returns the stored list. */
-  async save(module: CkanModule): Promise<CkanModule[]> {
+  save(module: CkanModule): Promise<CkanModule[]> {
+    // Saves are read-modify-write; running them one at a time keeps a
+    // concurrent save from overwriting the other's module.
+    const result = this.saveQueue.then(() => this.saveNow(module));
+    this.saveQueue = result.catch(() => undefined);
+    return result;
+  }
+
+  private async saveNow(module: CkanModule): Promise<CkanModule[]> {
     const existing = await this.read();
     const index = existing.findIndex((entry) => entry.identifier === module.identifier && entry.version === module.version);
     const modules = index === -1 ? [...existing, module] : existing.map((entry, i) => (i === index ? module : entry));

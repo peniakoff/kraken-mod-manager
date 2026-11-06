@@ -1,6 +1,7 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
+import { ImportedModpackStore } from "../src/adapters/imported-modpack-store.js";
 import { RegistryCacheStore, type StoredRegistryCache } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
@@ -77,6 +78,7 @@ async function createRegistryTestApp(http: HttpPort = { async get() { return fix
     http,
     new TarGzArchive(),
     new RegistryCacheStore(join(home, "cache", "registry.json")),
+      new ImportedModpackStore(join(home, "data", "imported-modpacks.json")),
     "https://example.test/CKAN-meta.tar.gz",
   );
   const installService = new InstallService(
@@ -192,6 +194,7 @@ describe("CKAN registry API", () => {
       },
       new TarGzArchive(),
       new RegistryCacheStore(join(home, "cache", "registry.json")),
+      new ImportedModpackStore(join(home, "data", "imported-modpacks.json")),
     );
     const restored = createApp("test", {
       fileSystem: new NodeFileSystem(),
@@ -359,6 +362,7 @@ describe("CKAN registry cache recovery", () => {
       { async get() { return fixtureArchive(); } },
       new TarGzArchive(),
       new SlowCacheStore("unused"),
+      new ImportedModpackStore(join(await mkdtemp(join(tmpdir(), "kmm-imports-")), "imported-modpacks.json")),
       "https://example.test/CKAN-meta.tar.gz",
     );
 
@@ -372,3 +376,48 @@ describe("CKAN registry cache recovery", () => {
   });
 });
 
+
+describe("imported modpacks in the registry", () => {
+  const metapackage = (identifier: string) =>
+    JSON.stringify({
+      spec_version: "v1.34",
+      identifier,
+      name: "Imported Pack",
+      author: "User",
+      version: "1.0",
+      kind: "metapackage",
+      depends: [{ name: "ModuleManager" }],
+    });
+
+  it("hides an imported modpack when the registry gains a mod with the same identifier", async () => {
+    const { app, home } = await createRegistryTestApp();
+
+    const imported = await request(app).post("/api/v1/modpacks").send({ contents: metapackage("MechJeb2") });
+    expect(imported.status).toBe(200);
+    const before = await request(app).get("/api/v1/mods/MechJeb2");
+    expect(before.body.mod.source).toBe("imported");
+
+    await request(app).post("/api/v1/registry/refresh");
+
+    const after = await request(app).get("/api/v1/mods/MechJeb2");
+    expect(after.status).toBe(200);
+    expect(after.body.mod).not.toHaveProperty("source");
+    expect(after.body.mod.version).toBe("2.15.0");
+    const stored = JSON.parse(await readFile(join(home, "data", "imported-modpacks.json"), "utf8")) as {
+      modules: Array<{ identifier: string }>;
+    };
+    expect(stored.modules.map((module) => module.identifier)).toContain("MechJeb2");
+  });
+
+  it("reports a damaged imports file", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await mkdir(join(home, "data"), { recursive: true });
+    await writeFile(join(home, "data", "imported-modpacks.json"), "not json");
+
+    const response = await request(app).get("/api/v1/registry");
+
+    expect(response.status).toBe(500);
+    expect(response.body.code).toBe("REGISTRY_CACHE_ERROR");
+    expect(response.body.message).toContain("imported-modpacks.json");
+  });
+});

@@ -186,6 +186,14 @@ export const modDetailsResponseSchema = z.object({
 
 export type ModDetailsResponse = z.infer<typeof modDetailsResponseSchema>;
 
+export const importModpackRequestSchema = z.object({ contents: z.string().min(1) });
+
+export type ImportModpackRequest = z.infer<typeof importModpackRequestSchema>;
+
+export const importModpackResponseSchema = z.object({ mod: ckanModuleSchema });
+
+export type ImportModpackResponse = z.infer<typeof importModpackResponseSchema>;
+
 export const modVersionsResponseSchema = z.object({
   identifier: z.string().min(1),
   versions: z.array(ckanModuleSchema),
