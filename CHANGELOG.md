@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 - Going back to 0.6.0 after running 0.7.0: the older version cannot read the new configuration file. Close Kraken, delete config.json from the Kraken config folder, start it again and choose the installation.
+- If the CKAN registry later gains a mod with the same identifier as an imported modpack, the registry mod replaces it in the mod list and is offered as its update.
 
 ## [0.6.0] - 2026-11-05
 

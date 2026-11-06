@@ -16,6 +16,13 @@ import { RegistryCacheStore, RegistryCacheError } from "./adapters/registry-cach
 
 export const DEFAULT_CKAN_META_URL = "https://github.com/KSP-CKAN/CKAN-meta/archive/master.tar.gz";
 
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const MAX_IDENTIFIER_LENGTH = 128;
+
+function providedNames(modules: readonly CkanModule[]): Set<string> {
+  return new Set(modules.flatMap((module) => module.provides.map((name) => moduleIdentifierKey(name))));
+}
+
 export class RegistryServiceError extends Error {
   constructor(
     message: string,
@@ -149,15 +156,39 @@ export class RegistryService {
     if (parsed.kind !== "metapackage") {
       throw new RegistryServiceError("The modpack file is not a CKAN metapackage.", "INVALID_MODPACK");
     }
-    if (this.snapshot?.modules.some((module) => moduleIdentifierKey(module.identifier) === moduleIdentifierKey(parsed.identifier))) {
+    if (!IDENTIFIER_PATTERN.test(parsed.identifier) || parsed.identifier.length > MAX_IDENTIFIER_LENGTH) {
+      throw new RegistryServiceError(
+        'The modpack identifier may only use letters, digits, "-" and "_" and must be at most 128 characters.',
+        "INVALID_MODPACK",
+      );
+    }
+    const key = moduleIdentifierKey(parsed.identifier);
+    const registryModules = this.snapshot?.modules ?? [];
+    if (registryModules.some((module) => moduleIdentifierKey(module.identifier) === key)) {
       throw new RegistryServiceError(
         `${parsed.identifier} is a mod in the CKAN registry and cannot be replaced by an imported file.`,
         "INVALID_MODPACK",
       );
     }
+    if (providedNames(registryModules).has(key)) {
+      throw new RegistryServiceError(
+        `${parsed.identifier} is a name that mods in the CKAN registry provide and cannot be used by an imported file.`,
+        "INVALID_MODPACK",
+      );
+    }
 
-    // `provides` is dropped too: a file must not join dependency resolution as an alternative to real mods.
-    const { download: _download, downloadMirrors: _downloadMirrors, provides: _provides, ...rest } = parsed;
+    // Download and install data is dropped as well as `provides`: a file must
+    // neither decide what gets downloaded or written nor join dependency
+    // resolution as an alternative to real mods.
+    const {
+      download: _download,
+      downloadMirrors: _downloadMirrors,
+      downloadSize: _downloadSize,
+      downloadHash: _downloadHash,
+      install: _install,
+      provides: _provides,
+      ...rest
+    } = parsed;
     const module: CkanModule = { ...rest, provides: [], source: "imported" };
     const imports = await this.importedStore.save(module);
     this.applySnapshot(this.snapshot, imports);
@@ -205,13 +236,17 @@ export class RegistryService {
     }
   }
 
-  /** Imports whose identifier the registry also has are hidden, never overriding a registry mod. */
+  /** Imports named like a registry mod or a name registry mods provide are hidden, never overriding a registry mod. */
   private applySnapshot(snapshot: RegistrySnapshot | undefined, imports: readonly CkanModule[]): void {
     this.snapshot = snapshot;
     const registryModules = snapshot?.modules ?? [];
     const registryIdentifiers = new Set(registryModules.map((module) => moduleIdentifierKey(module.identifier)));
+    const virtualNames = providedNames(registryModules);
     const visibleImports = imports
-      .filter((module) => !registryIdentifiers.has(moduleIdentifierKey(module.identifier)))
+      .filter((module) => {
+        const key = moduleIdentifierKey(module.identifier);
+        return !registryIdentifiers.has(key) && !virtualNames.has(key);
+      })
       .map((module): CkanModule => ({ ...module, source: "imported" }));
     this.index = new CkanIndex([...registryModules, ...visibleImports]);
   }
