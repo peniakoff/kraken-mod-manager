@@ -6,6 +6,7 @@ import {
   compareCkanVersions,
   isCompatibleWithKsp,
   isInstallable,
+  moduleIdentifierKey,
   parseCkanDocument,
   parseCkanText,
   refreshRegistry,
@@ -501,4 +502,8 @@ test("decides installability", () => {
   assert.equal(isInstallable({ kind: "metapackage" }), true);
   assert.equal(isInstallable({ kind: "dlc", download: "https://a.test/x.zip" }), false);
   assert.equal(isInstallable({}), false);
+});
+
+test("moduleIdentifierKey trims and lowercases an identifier", () => {
+  assert.equal(moduleIdentifierKey(" MechJeb2 "), "mechjeb2");
 });

@@ -1,5 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import InstalledModsView from "../src/components/InstalledModsView.vue";
 
 const props = {
@@ -69,5 +69,29 @@ describe("InstalledModsView", () => {
     const wrapper = mount(InstalledModsView, { props: { ...props, installedMods: [] } });
 
     expect(wrapper.text()).toContain("No managed or detected mods yet.");
+  });
+  it("opens the file picker from the Import modpack button", async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    const wrapper = mount(InstalledModsView, { props });
+
+    const button = wrapper.findAll("button").find((candidate) => candidate.text() === "Import modpack")!;
+    await button.trigger("click");
+
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toBe(wrapper.get('input[type="file"]').element);
+    click.mockRestore();
+  });
+
+  it("keeps the file input out of the Tab order and emits the picked file", async () => {
+    const wrapper = mount(InstalledModsView, { props });
+    const input = wrapper.get('input[type="file"]');
+    const file = new File(["{}"], "pack.ckan", { type: "application/json" });
+
+    expect(input.attributes("tabindex")).toBe("-1");
+    expect(input.attributes("accept")).toBe(".ckan,application/json");
+    Object.defineProperty(input.element, "files", { value: [file], configurable: true });
+    await input.trigger("change");
+
+    expect(wrapper.emitted("importModpack")).toEqual([[file]]);
   });
 });

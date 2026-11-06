@@ -3,6 +3,7 @@ import {
   configResponseSchema,
   directoryListingResponseSchema,
   healthResponseSchema,
+  importModpackResponseSchema,
   installAcceptedResponseSchema,
   installPlanResponseSchema,
   installRecoveryReportSchema,
@@ -17,6 +18,7 @@ import {
   type ConfigResponse,
   type DirectoryListingResponse,
   type HealthResponse,
+  type ImportModpackResponse,
   type InstallAcceptedResponse,
   type InstallPlanResponse,
   type InstallRecoveryReport,
@@ -156,6 +158,14 @@ function choicesBody(choices: Record<string, string> | undefined): { choices?: R
 
 function optionalBody(optional: readonly string[] | undefined): { optional?: string[] } {
   return optional !== undefined && optional.length > 0 ? { optional: [...optional] } : {};
+}
+
+export async function importModpack(contents: string): Promise<ImportModpackResponse> {
+  return request("/api/v1/modpacks", importModpackResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents }),
+  });
 }
 
 export async function planModInstall(

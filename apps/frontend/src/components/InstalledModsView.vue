@@ -17,7 +17,32 @@ const props = withDefaults(
 const emit = defineEmits<{
   uninstall: [mod: InstalledMod];
   update: [update: AvailableUpdate];
+  importModpack: [file: File];
 }>();
+
+const importButton = ref<HTMLButtonElement>();
+const modpackInput = ref<HTMLInputElement>();
+
+function openModpackPicker(): void {
+  modpackInput.value?.click();
+}
+
+function onModpackPicked(): void {
+  const input = modpackInput.value;
+  const file = input?.files?.[0];
+  if (input !== undefined) {
+    // Reset so picking the same file again still fires a change event.
+    input.value = "";
+  }
+  importButton.value?.focus();
+  if (file !== undefined) {
+    emit("importModpack", file);
+  }
+}
+
+function onModpackPickerCancelled(): void {
+  importButton.value?.focus();
+}
 
 const filter = ref("");
 
@@ -50,6 +75,22 @@ function isBusy(identifier: string): boolean {
       <span class="readout">{{ installedMods.length }}</span> {{ installedMods.length === 1 ? "mod" : "mods" }} in this
       installation ·
       <span class="readout">{{ managedCount }}</span> managed by Kraken
+      <template #actions>
+        <button ref="importButton" class="btn btn-secondary" type="button" @click="openModpackPicker">
+          <AppIcon name="download" />
+          Import modpack
+        </button>
+        <input
+          ref="modpackInput"
+          class="sr-only"
+          type="file"
+          tabindex="-1"
+          accept=".ckan,application/json"
+          aria-hidden="true"
+          @change="onModpackPicked"
+          @cancel="onModpackPickerCancelled"
+        />
+      </template>
     </ViewHeader>
 
     <section class="panel" aria-label="Installed mods">

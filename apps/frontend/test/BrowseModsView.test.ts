@@ -78,6 +78,22 @@ describe("BrowseModsView mod browser", () => {
     expect(row.text()).not.toContain("4 KB");
   });
 
+  it("marks an imported modpack with an Imported badge", () => {
+    const imported = {
+      identifier: "Pack",
+      name: "Pack",
+      authors: ["someone"],
+      version: "1.0.0",
+      tags: [],
+      kind: "metapackage" as const,
+      source: "imported" as const,
+    };
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, searchResults: [imported] } });
+
+    expect(wrapper.get('[data-testid="imported-badge"]').text()).toBe("Imported");
+    expect(wrapper.get('[data-testid="metapackage-badge"]').text()).toBe("Metapackage");
+  });
+
   it("hides Install for a DLC even when it has a download", () => {
     const dlc = {
       identifier: "MakingHistory",

@@ -238,3 +238,10 @@ test("accepts a known module kind and rejects an unknown one", () => {
   assert.equal(ckanModuleSchema.parse({ ...mod, kind: "metapackage" }).kind, "metapackage");
   assert.equal(ckanModuleSchema.safeParse({ ...mod, kind: "other" }).success, false);
 });
+
+test("accepts a known module source and rejects an unknown one", () => {
+  const mod = { identifier: "A", name: "A", authors: [], version: "1", tags: [] };
+
+  assert.equal(ckanModuleSchema.parse({ ...mod, source: "imported" }).source, "imported");
+  assert.equal(ckanModuleSchema.safeParse({ ...mod, source: "other" }).success, false);
+});

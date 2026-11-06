@@ -69,6 +69,8 @@ export interface CkanModule {
   tags: string[];
   /** Set only for `metapackage` and `dlc`; ordinary packages leave it absent. */
   kind?: "metapackage" | "dlc";
+  /** `imported` marks modules created from a user-supplied modpack rather than the CKAN registry. */
+  source?: "registry" | "imported";
   /** Virtual package names this module satisfies, excluding its own identifier. */
   provides: string[];
   /** The first usable download URL. */
@@ -123,6 +125,11 @@ export interface CkanSearchResult {
  */
 export function isInstallable(module: Pick<CkanModule, "download" | "kind">): boolean {
   return module.kind === "metapackage" || (module.kind !== "dlc" && module.download !== undefined);
+}
+
+/** The key under which modules with the same identifier are grouped, regardless of case and surrounding whitespace. */
+export function moduleIdentifierKey(identifier: string): string {
+  return identifier.trim().toLowerCase();
 }
 
 export function parseCkanDocument(raw: unknown): CkanModule | undefined {
@@ -271,7 +278,7 @@ export class CkanIndex {
   constructor(modules: readonly CkanModule[]) {
     this.modules = [...modules];
     for (const module of this.modules) {
-      const key = module.identifier.trim().toLowerCase();
+      const key = moduleIdentifierKey(module.identifier);
       const existing = this.byIdentifier.get(key);
       if (existing === undefined) {
         this.byIdentifier.set(key, [module]);
@@ -290,7 +297,7 @@ export class CkanIndex {
   }
 
   findByIdentifier(identifier: string): CkanModule[] {
-    const target = identifier.trim().toLowerCase();
+    const target = moduleIdentifierKey(identifier);
     const matches = this.byIdentifier.get(target);
     return matches !== undefined ? [...matches] : [];
   }

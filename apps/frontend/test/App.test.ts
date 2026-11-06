@@ -1069,6 +1069,107 @@ describe("App optional mods at install", () => {
     expect(installBodies[0]).toEqual({ version: "1.0.0", installDependencies: true });
   });
 
+  describe("modpack import", () => {
+    const jsonResponse = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const pack = {
+      identifier: "MyPack",
+      name: "My Pack",
+      authors: ["someone"],
+      version: "1.0.0",
+      tags: [],
+      kind: "metapackage",
+      source: "imported",
+    };
+    const packTarget = { identifier: "MyPack", name: "My Pack", version: "1.0.0" };
+
+    function importFetch(modpackResponse: () => Response) {
+      const modpackBodies: unknown[] = [];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return jsonResponse({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/install-recovery") return jsonResponse({ rolledBack: [], failed: [] });
+        if (url === "/api/v1/config") {
+          return jsonResponse({
+            configured: true,
+            installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+          });
+        }
+        if (url === "/api/v1/registry") return jsonResponse({ status: "ready", moduleCount: 1 });
+        if (url === "/api/v1/installed-mods") return jsonResponse({ mods: [] });
+        if (url === "/api/v1/updates") return jsonResponse({ updates: [] });
+        if (url === "/api/v1/modpacks" && init?.method === "POST") {
+          modpackBodies.push(JSON.parse(String(init.body)));
+          return modpackResponse();
+        }
+        if (url === "/api/v1/mods/MyPack/plan") {
+          return jsonResponse({
+            status: "ok",
+            target: packTarget,
+            toInstall: [packTarget],
+            alreadySatisfied: [],
+            conflicts: [],
+            unmet: [],
+            optional: [],
+          });
+        }
+        if (url.startsWith("/api/v1/mods")) return jsonResponse({ total: 0, mods: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      return { fetchMock, modpackBodies };
+    }
+
+    async function pickFile(wrapper: ReturnType<typeof mount>, file: File): Promise<void> {
+      await wrapper.findAll("button").find((button) => button.text().startsWith("Installed"))!.trigger("click");
+      await vi.waitFor(() => expect(wrapper.find('input[type="file"]').exists()).toBe(true));
+      const input = wrapper.get('input[type="file"]');
+      Object.defineProperty(input.element, "files", { value: [file], configurable: true });
+      await input.trigger("change");
+    }
+
+    it("rejects a modpack file over 1 MB without sending it", async () => {
+      const { fetchMock, modpackBodies } = importFetch(() => jsonResponse({ mod: pack }));
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("EventSource", MockEventSource);
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+
+      await pickFile(wrapper, new File(["x".repeat(2 * 1024 * 1024)], "big.ckan"));
+
+      await vi.waitFor(() => expect(wrapper.get('[role="alert"]').text()).toContain("The modpack file is larger than 1 MB."));
+      expect(modpackBodies).toEqual([]);
+    });
+
+    it("posts the file contents, then plans the module and opens the dependency dialog", async () => {
+      const contents = '{"identifier":"MyPack"}';
+      const { fetchMock, modpackBodies } = importFetch(() => jsonResponse({ mod: pack }));
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("EventSource", MockEventSource);
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+
+      await pickFile(wrapper, new File([contents], "pack.ckan"));
+
+      await vi.waitFor(() => expect(wrapper.find('[role="dialog"]').exists()).toBe(true));
+      expect(modpackBodies).toEqual([{ contents }]);
+      expect(wrapper.get('[role="dialog"]').text()).toContain("My Pack");
+    });
+
+    it("shows the server message when the modpack is rejected", async () => {
+      const { fetchMock } = importFetch(() =>
+        jsonResponse({ code: "INVALID_MODPACK", message: "The file is not a CKAN modpack." }, 400),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("EventSource", MockEventSource);
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+
+      await pickFile(wrapper, new File(["nope"], "bad.ckan"));
+
+      await vi.waitFor(() => expect(wrapper.get('[role="alert"]').text()).toContain("The file is not a CKAN modpack."));
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    });
+  });
+
   it("installs directly when every optional mod is unpicked", async () => {
     const { fetchMock, installBodies } = optionalFetch(false);
     vi.stubGlobal("fetch", fetchMock);

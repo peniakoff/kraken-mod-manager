@@ -22,6 +22,7 @@ import {
   getModVersions,
   getRegistry,
   getUpdates,
+  importModpack,
   installMod,
   planModInstall,
   refreshRegistry,
@@ -42,6 +43,9 @@ import UninstallDialog from "./components/UninstallDialog.vue";
 import { canInstall } from "./installable.js";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 import { useInstallQueue } from "./useInstallQueue.js";
+
+/** Matches the 1 MB body limit of POST /api/v1/modpacks. */
+const MAX_MODPACK_BYTES = 1_048_576;
 
 const status = ref<"checking" | "ready" | "unavailable">("checking");
 // The shell's status light shows the connection only. A failed operation
@@ -340,6 +344,20 @@ async function onSelectMod(mod: CkanModule | undefined): Promise<void> {
 
 function onSelectModVersion(versionMod: CkanModule): void {
   selectedMod.value = versionMod;
+}
+
+async function onImportModpack(file: File): Promise<void> {
+  errorMessage.value = undefined;
+  if (file.size > MAX_MODPACK_BYTES) {
+    errorMessage.value = "The modpack file is larger than 1 MB.";
+    return;
+  }
+  try {
+    const { mod } = await importModpack(await file.text());
+    await onInstall(mod);
+  } catch (error) {
+    reportError(error, "The modpack could not be imported.");
+  }
 }
 
 async function onInstall(mod: CkanModule): Promise<void> {
@@ -655,6 +673,7 @@ onMounted(loadSetup);
       :uninstalling-identifier="uninstallingIdentifier"
       @uninstall="onUninstall"
       @update="onUpdate"
+      @import-modpack="onImportModpack"
     />
     <BrowseModsView
       v-else

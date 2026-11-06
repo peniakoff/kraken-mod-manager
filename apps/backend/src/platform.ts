@@ -76,6 +76,29 @@ export function getInstallManifestFilePath(platform: PlatformPort): string {
   }
 }
 
+export function getImportedModpacksFilePath(platform: PlatformPort): string {
+  switch (platform.platform) {
+    case "win32":
+      return join(
+        platform.environment.LOCALAPPDATA ?? join(platform.homeDirectory, "AppData", "Local"),
+        "Kraken Mod Manager",
+        "imported-modpacks.json",
+      );
+    case "linux":
+      return join(
+        platform.environment.XDG_DATA_HOME ?? join(platform.homeDirectory, ".local", "share"),
+        "kraken-mod-manager",
+        "imported-modpacks.json",
+      );
+    case "darwin":
+      return join(platform.homeDirectory, "Library", "Application Support", "Kraken Mod Manager", "imported-modpacks.json");
+    default: {
+      const exhaustive: never = platform.platform;
+      throw new Error(`Unsupported platform: ${exhaustive}`);
+    }
+  }
+}
+
 export function getDownloadCacheDirectory(platform: PlatformPort): string {
   switch (platform.platform) {
     case "win32":

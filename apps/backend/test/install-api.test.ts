@@ -10,6 +10,7 @@ import type { HttpPort, PlatformPort } from "@kraken/core";
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
+import { ImportedModpackStore } from "../src/adapters/imported-modpack-store.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { packUstar, TarGzArchive } from "../src/adapters/tar-gz-archive.js";
@@ -413,7 +414,9 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
     },
   };
 
+  const requestedUrls: string[] = [];
   const streamingHttp = new StreamingHttp(async (url) => {
+    requestedUrls.push(typeof url === "string" ? url : url instanceof URL ? url.href : url.url);
     if (testOptions.holdDownload?.url === url) {
       await testOptions.holdDownload.until;
     }
@@ -460,6 +463,7 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
       http,
       new TarGzArchive(),
       new RegistryCacheStore(join(home, "cache", "registry.json")),
+      new ImportedModpackStore(join(home, "data", "imported-modpacks.json")),
       "https://example.test/CKAN-meta.tar.gz",
     );
     const installService = new InstallService(
@@ -492,6 +496,7 @@ async function createInstallTestApp(testOptions: InstallTestOptions = {}) {
     ksp,
     installService,
     restart: () => start(new ZipArchive()),
+    requestedUrls,
     downloads: join(home, "cache", "downloads"),
     sha256: exampleHash.sha256,
   };
@@ -714,6 +719,7 @@ describe("mod install API", () => {
       },
       new TarGzArchive(),
       new RegistryCacheStore(join(home, "cache", "registry.json")),
+      new ImportedModpackStore(join(home, "data", "imported-modpacks.json")),
       "https://example.test/CKAN-meta.tar.gz",
     );
     const installService = new InstallService(
@@ -1830,5 +1836,177 @@ describe("metapackages", () => {
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(response.status).toBeLessThan(500);
     expect(response.body.code).toBe("NO_DOWNLOAD");
+  });
+});
+
+describe("modpack import", () => {
+  const modpack = {
+    spec_version: "v1.34",
+    identifier: "MyPack",
+    name: "My Pack",
+    abstract: "A modpack",
+    author: "User",
+    version: "1.0",
+    kind: "metapackage",
+    depends: [{ name: "ModuleManager" }, { name: "AnotherMod", version: "1.0.0" }],
+    download: "https://evil.test/x.zip",
+  };
+  const importedFile = (home: string) => join(home, "data", "imported-modpacks.json");
+
+  it("imports a modpack that can then be found, planned and installed", async () => {
+    const { app, ksp, requestedUrls } = await createInstallTestApp();
+
+    const imported = await request(app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify(modpack) });
+    expect(imported.status).toBe(200);
+    expect(imported.body.mod).toMatchObject({ identifier: "MyPack", source: "imported", kind: "metapackage" });
+    expect(imported.body.mod).not.toHaveProperty("download");
+
+    const found = await request(app).get("/api/v1/mods").query({ q: "My Pack" });
+    expect(found.body.mods).toEqual([expect.objectContaining({ identifier: "MyPack", source: "imported" })]);
+
+    const accepted = await request(app).post("/api/v1/mods/MyPack/install").send({});
+    expect(accepted.status).toBe(202);
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(true);
+    expect(existsSync(join(ksp, "GameData", "AnotherMod"))).toBe(true);
+    expect(requestedUrls).not.toContain("https://evil.test/x.zip");
+  });
+
+  it.each([
+    ["not json", "not valid JSON"],
+    [
+      JSON.stringify({ ...modpack, identifier: "RegularMod", kind: undefined }),
+      "not a CKAN metapackage",
+    ],
+    [JSON.stringify({ ...modpack, identifier: "ModuleManager" }), "cannot be replaced"],
+    [JSON.stringify({ ...modpack, identifier: "modulemanager", version: "9999" }), "cannot be replaced"],
+    [JSON.stringify({ ...modpack, version: undefined }), "missing an identifier"],
+    [JSON.stringify({ ...modpack, identifier: "RSSTextures" }), "mods in the CKAN registry provide"],
+    [JSON.stringify({ ...modpack, identifier: "rsstextures" }), "mods in the CKAN registry provide"],
+    [JSON.stringify({ ...modpack, identifier: "My Pack" }), "may only use letters, digits"],
+    [JSON.stringify({ ...modpack, identifier: "-MyPack" }), "may only use letters, digits"],
+    [JSON.stringify({ ...modpack, identifier: "A".repeat(129) }), "at most 128 characters"],
+  ])("rejects files that are not modpacks (%#)", async (contents, message) => {
+    const { app, home } = await createInstallTestApp();
+
+    const response = await request(app).post("/api/v1/modpacks").send({ contents });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "INVALID_MODPACK" });
+    expect(response.body.message).toContain(message);
+    expect(existsSync(importedFile(home))).toBe(false);
+  });
+
+  it("drops provides from an imported modpack", async () => {
+    const { app, home } = await createInstallTestApp();
+
+    const response = await request(app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify({ ...modpack, provides: ["ModuleManager"] }) });
+
+    expect(response.status).toBe(200);
+    expect(response.body.mod.provides).toEqual([]);
+    const stored = JSON.parse(readFileSync(importedFile(home), "utf8")) as { modules: Array<{ provides: string[] }> };
+    expect(stored.modules[0]?.provides).toEqual([]);
+  });
+
+  it("drops download size, hash and install directives from an imported modpack", async () => {
+    const { app, home } = await createInstallTestApp();
+
+    const response = await request(app)
+      .post("/api/v1/modpacks")
+      .send({
+        contents: JSON.stringify({
+          ...modpack,
+          download_size: 123,
+          download_hash: { sha256: "a".repeat(64) },
+          install: [{ file: "GameData/X", install_to: "GameData" }],
+        }),
+      });
+
+    expect(response.status).toBe(200);
+    for (const key of ["download", "downloadMirrors", "downloadSize", "downloadHash", "install"]) {
+      expect(response.body.mod).not.toHaveProperty(key);
+    }
+    const stored = JSON.parse(readFileSync(importedFile(home), "utf8")) as { modules: Array<Record<string, unknown>> };
+    for (const key of ["download", "downloadMirrors", "downloadSize", "downloadHash", "install"]) {
+      expect(stored.modules[0]).not.toHaveProperty(key);
+    }
+  });
+
+  it("hides a stored import named like a virtual name once the registry is refreshed", async () => {
+    const { app, home } = await createInstallTestApp();
+    await request(app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify(modpack) });
+    const stored = JSON.parse(readFileSync(importedFile(home), "utf8")) as { modules: Array<{ identifier: string }> };
+    const renamed = stored.modules.map((module) => ({ ...module, identifier: "RSSTextures" }));
+    writeFileSync(importedFile(home), JSON.stringify({ ...stored, modules: renamed }));
+
+    await request(app).post("/api/v1/registry/refresh");
+
+    const found = await request(app).get("/api/v1/mods/RSSTextures");
+    expect(found.status).toBe(404);
+    expect(JSON.parse(readFileSync(importedFile(home), "utf8")).modules).toHaveLength(1);
+  });
+
+  it("updates an installed imported modpack when a newer version is imported", async () => {
+    const { app, home } = await createInstallTestApp();
+    const importVersion = async (version: string) => {
+      const response = await request(app)
+        .post("/api/v1/modpacks")
+        .send({ contents: JSON.stringify({ ...modpack, version }) });
+      expect(response.status).toBe(200);
+    };
+    const install = async () => {
+      const accepted = await request(app).post("/api/v1/mods/MyPack/install").send({});
+      expect(accepted.status).toBe(202);
+      expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+    };
+
+    await importVersion("1.0");
+    await install();
+    expect(manifestRecord(home, "MyPack").version).toBe("1.0");
+
+    await importVersion("2.0");
+    await install();
+    expect(manifestRecord(home, "MyPack").version).toBe("2.0");
+  });
+
+  it("accepts up to 1 MB only on the import route", async () => {
+    const { app } = await createInstallTestApp();
+    const padding = "x".repeat(200_000);
+
+    const imported = await request(app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify({ ...modpack, abstract: padding }) });
+    expect(imported.status).toBe(200);
+
+    const config = await request(app).put("/api/v1/config").send({ installationPath: padding });
+    expect(config.status).toBe(413);
+    expect(config.body.code).toBe("PAYLOAD_TOO_LARGE");
+  });
+
+  it("keeps an imported modpack across a restart and offers its dependencies as orphans", async () => {
+    const first = await createInstallTestApp();
+    await request(first.app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify(modpack) });
+    const accepted = await request(first.app).post("/api/v1/mods/MyPack/install").send({});
+    expect((await waitForJob(first.app, accepted.body.job.jobId)).status).toBe("succeeded");
+
+    const { app } = first.restart();
+    const plan = await request(app).post("/api/v1/mods/MyPack/uninstall-plan").send({});
+
+    expect(plan.status).toBe(200);
+    expect(JSON.stringify(plan.body)).toContain("ModuleManager");
+    expect(JSON.stringify(plan.body)).toContain("AnotherMod");
+    expect(plan.body.orphans.map((orphan: { identifier: string }) => orphan.identifier).sort()).toEqual([
+      "AnotherMod",
+      "ModuleManager",
+    ]);
   });
 });

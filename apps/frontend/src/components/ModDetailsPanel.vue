@@ -233,6 +233,7 @@ onUnmounted(() => {
               Update {{ availableUpdate.availableVersion }} available
             </span>
             <span v-if="currentVersionMod.kind === 'metapackage'" class="badge" data-testid="metapackage-badge">Metapackage</span>
+            <span v-if="currentVersionMod.source === 'imported'" class="badge" data-testid="imported-badge">Imported</span>
             <span :class="['badge', compat.ok ? '' : 'badge-warn']" data-testid="details-compat-flag">
               <AppIcon :name="compat.ok ? 'check' : 'alert'" :size="14" :class="compat.ok ? 'text-ok' : ''" />
               {{ compat.text }}

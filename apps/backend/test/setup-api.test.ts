@@ -1,6 +1,7 @@
 import { ConfigStore } from "../src/adapters/config-store.js";
 import { InstallManifestStore } from "../src/adapters/install-manifest-store.js";
 import { NodeFileSystem } from "../src/adapters/node-file-system.js";
+import { ImportedModpackStore } from "../src/adapters/imported-modpack-store.js";
 import { RegistryCacheStore } from "../src/adapters/registry-cache-store.js";
 import { StreamingHttp } from "../src/adapters/streaming-http.js";
 import { TarGzArchive } from "../src/adapters/tar-gz-archive.js";
@@ -33,6 +34,7 @@ async function createTestApp() {
     },
     new TarGzArchive(),
     new RegistryCacheStore(join(home, "cache", "registry.json")),
+      new ImportedModpackStore(join(home, "data", "imported-modpacks.json")),
   );
   const app = createApp("test", {
     fileSystem: new NodeFileSystem(),

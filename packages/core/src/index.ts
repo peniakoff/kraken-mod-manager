@@ -9,6 +9,7 @@ export {
   compareCkanVersions,
   isCompatibleWithKsp,
   isInstallable,
+  moduleIdentifierKey,
   parseCkanDocument,
   parseCkanText,
   refreshRegistry,
