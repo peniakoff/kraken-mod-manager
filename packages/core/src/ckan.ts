@@ -69,6 +69,8 @@ export interface CkanModule {
   tags: string[];
   /** Set only for `metapackage` and `dlc`; ordinary packages leave it absent. */
   kind?: "metapackage" | "dlc";
+  /** `imported` marks modules created from a user-supplied modpack rather than the CKAN registry. */
+  source?: "registry" | "imported";
   /** Virtual package names this module satisfies, excluding its own identifier. */
   provides: string[];
   /** The first usable download URL. */

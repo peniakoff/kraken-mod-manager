@@ -151,6 +151,7 @@ export const ckanModuleSchema = z.object({
   kspVersionMax: z.string().min(1).optional(),
   tags: z.array(z.string().min(1)),
   kind: z.enum(["metapackage", "dlc"]).optional(),
+  source: z.enum(["registry", "imported"]).optional(),
   provides: z.array(z.string().min(1)).optional(),
   download: z.string().min(1).optional(),
   downloadSize: z.number().int().nonnegative().optional(),
