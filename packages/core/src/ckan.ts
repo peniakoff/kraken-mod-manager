@@ -127,6 +127,11 @@ export function isInstallable(module: Pick<CkanModule, "download" | "kind">): bo
   return module.kind === "metapackage" || (module.kind !== "dlc" && module.download !== undefined);
 }
 
+/** The key under which modules with the same identifier are grouped, regardless of case and surrounding whitespace. */
+export function moduleIdentifierKey(identifier: string): string {
+  return identifier.trim().toLowerCase();
+}
+
 export function parseCkanDocument(raw: unknown): CkanModule | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
@@ -273,7 +278,7 @@ export class CkanIndex {
   constructor(modules: readonly CkanModule[]) {
     this.modules = [...modules];
     for (const module of this.modules) {
-      const key = module.identifier.trim().toLowerCase();
+      const key = moduleIdentifierKey(module.identifier);
       const existing = this.byIdentifier.get(key);
       if (existing === undefined) {
         this.byIdentifier.set(key, [module]);
@@ -292,7 +297,7 @@ export class CkanIndex {
   }
 
   findByIdentifier(identifier: string): CkanModule[] {
-    const target = identifier.trim().toLowerCase();
+    const target = moduleIdentifierKey(identifier);
     const matches = this.byIdentifier.get(target);
     return matches !== undefined ? [...matches] : [];
   }

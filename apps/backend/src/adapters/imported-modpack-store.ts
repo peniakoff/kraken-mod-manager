@@ -1,4 +1,4 @@
-import type { CkanModule } from "@kraken/core";
+import { moduleIdentifierKey, type CkanModule } from "@kraken/core";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -56,7 +56,7 @@ export class ImportedModpackStore {
 
   private async saveNow(module: CkanModule): Promise<CkanModule[]> {
     const existing = await this.read();
-    const index = existing.findIndex((entry) => entry.identifier === module.identifier && entry.version === module.version);
+    const index = existing.findIndex((entry) => moduleIdentifierKey(entry.identifier) === moduleIdentifierKey(module.identifier) && entry.version === module.version);
     const modules = index === -1 ? [...existing, module] : existing.map((entry, i) => (i === index ? module : entry));
     await this.write({ schemaVersion: 1, modules });
     return modules;

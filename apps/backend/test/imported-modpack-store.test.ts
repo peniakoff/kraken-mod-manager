@@ -48,6 +48,15 @@ describe("ImportedModpackStore", () => {
     expect(saved.find((module) => module.version === "2.0")?.abstract).toBe("A pack");
   });
 
+  it("treats identifiers that differ only in case as the same entry", async () => {
+    const store = new ImportedModpackStore(await newFilePath());
+    await store.save({ ...pack("1.0"), identifier: "Pack", name: "First" });
+    const saved = await store.save({ ...pack("1.0"), identifier: "pack", name: "Second" });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.name).toBe("Second");
+  });
+
   it("keeps both modules when two saves run at the same time", async () => {
     const filePath = await newFilePath();
     const store = new ImportedModpackStore(filePath);

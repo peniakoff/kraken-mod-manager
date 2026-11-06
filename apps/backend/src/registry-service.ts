@@ -6,6 +6,7 @@ import {
   type CkanModule,
   type CkanSearchOptions,
   type CkanSearchResult,
+  moduleIdentifierKey,
   parseCkanDocument,
   type HttpPort,
   type RegistrySnapshot,
@@ -148,7 +149,7 @@ export class RegistryService {
     if (parsed.kind !== "metapackage") {
       throw new RegistryServiceError("The modpack file is not a CKAN metapackage.", "INVALID_MODPACK");
     }
-    if (this.snapshot?.modules.some((module) => identifierKey(module.identifier) === identifierKey(parsed.identifier))) {
+    if (this.snapshot?.modules.some((module) => moduleIdentifierKey(module.identifier) === moduleIdentifierKey(parsed.identifier))) {
       throw new RegistryServiceError(
         `${parsed.identifier} is a mod in the CKAN registry and cannot be replaced by an imported file.`,
         "INVALID_MODPACK",
@@ -208,15 +209,10 @@ export class RegistryService {
   private applySnapshot(snapshot: RegistrySnapshot | undefined, imports: readonly CkanModule[]): void {
     this.snapshot = snapshot;
     const registryModules = snapshot?.modules ?? [];
-    const registryIdentifiers = new Set(registryModules.map((module) => identifierKey(module.identifier)));
+    const registryIdentifiers = new Set(registryModules.map((module) => moduleIdentifierKey(module.identifier)));
     const visibleImports = imports
-      .filter((module) => !registryIdentifiers.has(identifierKey(module.identifier)))
+      .filter((module) => !registryIdentifiers.has(moduleIdentifierKey(module.identifier)))
       .map((module): CkanModule => ({ ...module, source: "imported" }));
     this.index = new CkanIndex([...registryModules, ...visibleImports]);
   }
-}
-
-/** Matches how `CkanIndex` groups identifiers, so a differently cased import cannot shadow a registry mod. */
-function identifierKey(identifier: string): string {
-  return identifier.trim().toLowerCase();
 }
