@@ -148,15 +148,16 @@ export class RegistryService {
     if (parsed.kind !== "metapackage") {
       throw new RegistryServiceError("The modpack file is not a CKAN metapackage.", "INVALID_MODPACK");
     }
-    if (this.snapshot?.modules.some((module) => module.identifier === parsed.identifier)) {
+    if (this.snapshot?.modules.some((module) => identifierKey(module.identifier) === identifierKey(parsed.identifier))) {
       throw new RegistryServiceError(
         `${parsed.identifier} is a mod in the CKAN registry and cannot be replaced by an imported file.`,
         "INVALID_MODPACK",
       );
     }
 
-    const { download: _download, downloadMirrors: _downloadMirrors, ...rest } = parsed;
-    const module: CkanModule = { ...rest, source: "imported" };
+    // `provides` is dropped too: a file must not join dependency resolution as an alternative to real mods.
+    const { download: _download, downloadMirrors: _downloadMirrors, provides: _provides, ...rest } = parsed;
+    const module: CkanModule = { ...rest, provides: [], source: "imported" };
     const imports = await this.importedStore.save(module);
     this.applySnapshot(this.snapshot, imports);
     return module;
@@ -207,10 +208,15 @@ export class RegistryService {
   private applySnapshot(snapshot: RegistrySnapshot | undefined, imports: readonly CkanModule[]): void {
     this.snapshot = snapshot;
     const registryModules = snapshot?.modules ?? [];
-    const registryIdentifiers = new Set(registryModules.map((module) => module.identifier));
+    const registryIdentifiers = new Set(registryModules.map((module) => identifierKey(module.identifier)));
     const visibleImports = imports
-      .filter((module) => !registryIdentifiers.has(module.identifier))
+      .filter((module) => !registryIdentifiers.has(identifierKey(module.identifier)))
       .map((module): CkanModule => ({ ...module, source: "imported" }));
     this.index = new CkanIndex([...registryModules, ...visibleImports]);
   }
+}
+
+/** Matches how `CkanIndex` groups identifiers, so a differently cased import cannot shadow a registry mod. */
+function identifierKey(identifier: string): string {
+  return identifier.trim().toLowerCase();
 }

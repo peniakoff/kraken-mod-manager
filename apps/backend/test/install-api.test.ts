@@ -1882,6 +1882,7 @@ describe("modpack import", () => {
       "not a CKAN metapackage",
     ],
     [JSON.stringify({ ...modpack, identifier: "ModuleManager" }), "cannot be replaced"],
+    [JSON.stringify({ ...modpack, identifier: "modulemanager", version: "9999" }), "cannot be replaced"],
     [JSON.stringify({ ...modpack, version: undefined }), "missing an identifier"],
   ])("rejects files that are not modpacks (%#)", async (contents, message) => {
     const { app, home } = await createInstallTestApp();
@@ -1892,6 +1893,19 @@ describe("modpack import", () => {
     expect(response.body).toMatchObject({ code: "INVALID_MODPACK" });
     expect(response.body.message).toContain(message);
     expect(existsSync(importedFile(home))).toBe(false);
+  });
+
+  it("drops provides from an imported modpack", async () => {
+    const { app, home } = await createInstallTestApp();
+
+    const response = await request(app)
+      .post("/api/v1/modpacks")
+      .send({ contents: JSON.stringify({ ...modpack, provides: ["ModuleManager"] }) });
+
+    expect(response.status).toBe(200);
+    expect(response.body.mod.provides).toEqual([]);
+    const stored = JSON.parse(readFileSync(importedFile(home), "utf8")) as { modules: Array<{ provides: string[] }> };
+    expect(stored.modules[0]?.provides).toEqual([]);
   });
 
   it("accepts up to 1 MB only on the import route", async () => {

@@ -409,6 +409,33 @@ describe("imported modpacks in the registry", () => {
     expect(stored.modules.map((module) => module.identifier)).toContain("MechJeb2");
   });
 
+  it("hides an imported modpack whose identifier differs from a registry mod only in case", async () => {
+    const { app } = await createRegistryTestApp();
+
+    // A higher version would win getLatest if the import stayed visible.
+    const contents = JSON.stringify({ ...JSON.parse(metapackage("mechjeb2")), version: "9999" });
+    await request(app).post("/api/v1/modpacks").send({ contents });
+    await request(app).post("/api/v1/registry/refresh");
+
+    const after = await request(app).get("/api/v1/mods/MechJeb2");
+    expect(after.body.mod.version).toBe("2.15.0");
+    expect(after.body.mod).not.toHaveProperty("source");
+  });
+
+  it("fails a refresh with a damaged imports file but still writes the registry cache", async () => {
+    const { app, home } = await createRegistryTestApp();
+    await mkdir(join(home, "data"), { recursive: true });
+    await writeFile(join(home, "data", "imported-modpacks.json"), "not json");
+
+    const response = await request(app).post("/api/v1/registry/refresh");
+
+    expect(response.status).toBe(500);
+    expect(response.body.code).toBe("REGISTRY_CACHE_ERROR");
+    expect(response.body.message).toContain("imported-modpacks.json");
+    const cache = JSON.parse(await readFile(join(home, "cache", "registry.json"), "utf8")) as { modules: unknown[] };
+    expect(cache.modules.length).toBeGreaterThan(0);
+  });
+
   it("reports a damaged imports file", async () => {
     const { app, home } = await createRegistryTestApp();
     await mkdir(join(home, "data"), { recursive: true });
