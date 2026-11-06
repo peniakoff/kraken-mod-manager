@@ -10,6 +10,7 @@ import {
   installedModsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  ckanModuleSchema,
   modDetailsResponseSchema,
   modVersionsResponseSchema,
   modsQuerySchema,
@@ -229,4 +230,11 @@ test("accepts an uninstall plan and an uninstall result", () => {
   assert.equal(plan.dependents[0]?.identifier, "DependentMod");
   assert.equal(uninstallPlanResponseSchema.safeParse({ target: { identifier: "A", name: "A" } }).success, false);
   assert.deepEqual(uninstallResponseSchema.parse({ removed: ["A", "B"] }), { removed: ["A", "B"] });
+});
+
+test("accepts a known module kind and rejects an unknown one", () => {
+  const mod = { identifier: "A", name: "A", authors: [], version: "1", tags: [] };
+
+  assert.equal(ckanModuleSchema.parse({ ...mod, kind: "metapackage" }).kind, "metapackage");
+  assert.equal(ckanModuleSchema.safeParse({ ...mod, kind: "other" }).success, false);
 });

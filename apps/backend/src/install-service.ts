@@ -3,6 +3,7 @@ import {
   buildInventory,
   InstallPolicyError,
   isAllowedDestination,
+  isInstallable,
   normalizeSlashPath,
   planUninstall,
   resolveInstallMappings,
@@ -132,11 +133,12 @@ export class InstallService {
     const target = this.findModule(identifier, version);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
-    // Picked optional mods need the resolver, so they imply dependency resolution.
+    // Picked optional mods and metapackages (which are nothing but their
+    // dependencies) need the resolver, so they imply dependency resolution.
     const modulesToInstall = await this.resolveModulesForInstall(
       kspPath,
       target,
-      installDependencies || optional.length > 0,
+      installDependencies || optional.length > 0 || target.kind === "metapackage",
       choices,
       optional,
     );
@@ -377,7 +379,7 @@ export class InstallService {
     optional: readonly string[],
   ): Promise<CkanModule[]> {
     if (!installDependencies) {
-      if (target.download === undefined || target.download.length === 0) {
+      if (!hasInstallSource(target)) {
         throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
       }
       return [target];
@@ -411,9 +413,11 @@ export class InstallService {
     const modules: CkanModule[] = [];
     for (const ref of plan.toInstall) {
       const module = this.findModule(ref.identifier, ref.version);
-      if (module.download === undefined || module.download.length === 0) {
+      if (!hasInstallSource(module)) {
         throw new InstallServiceError(
-          `Dependency ${module.identifier} does not declare a download URL.`,
+          module.kind === "dlc"
+            ? `Dependency ${module.identifier} is a DLC that Kraken cannot install.`
+            : `Dependency ${module.identifier} does not declare a download URL.`,
           "NO_DOWNLOAD",
         );
       }
@@ -430,6 +434,9 @@ export class InstallService {
     isManual: boolean,
     journal: InstallJournal,
   ): Promise<ModuleInstallSnapshot> {
+    if (module.kind === "metapackage") {
+      return await this.installMetapackage(jobId, kspPath, module, stepLabel, isManual, journal);
+    }
     if (module.download === undefined || module.download.length === 0) {
       throw new InstallServiceError("This mod does not declare a download URL.", "NO_DOWNLOAD");
     }
@@ -452,6 +459,62 @@ export class InstallService {
     } finally {
       await rm(downloadPath, { force: true });
     }
+  }
+
+  /**
+   * A metapackage has no archive: it is recorded with no files so the mods it
+   * depends on are tracked as its dependencies, and it can be updated and
+   * uninstalled like any managed mod.
+   */
+  private async installMetapackage(
+    jobId: string,
+    kspPath: string,
+    module: CkanModule,
+    stepLabel: string,
+    isManual: boolean,
+    journal: InstallJournal,
+  ): Promise<ModuleInstallSnapshot> {
+    this.jobStore.update(jobId, {
+      status: "running",
+      phase: "installing",
+      message: `Recording metapackage${stepLabel}.`,
+      version: module.version,
+    });
+    return await this.withManifestMutation(async () => {
+      const canonicalRoot = await this.fileSystem.realpath(kspPath);
+      const manifest = await this.manifestStore.read();
+      const previous = manifest.mods.find(
+        (mod) => mod.identifier === module.identifier && mod.installationPath === canonicalRoot,
+      );
+      const previousRecord = previous === undefined ? undefined : { ...previous, files: [...previous.files] };
+      const backupId = globalThis.crypto.randomUUID();
+      await journal.beginModule({
+        identifier: module.identifier,
+        name: module.name,
+        backupId,
+        previousRecord: previousRecord ?? null,
+      });
+      const record: ManagedModRecord = {
+        identifier: module.identifier,
+        name: module.name,
+        version: module.version,
+        installationPath: canonicalRoot,
+        files: [],
+        autoInstalled: previous?.autoInstalled ?? !isManual,
+      };
+      const nextMods = manifest.mods.filter(
+        (mod) => mod.identifier !== module.identifier || mod.installationPath !== canonicalRoot,
+      );
+      nextMods.push(record);
+      await this.manifestStore.write({ schemaVersion: 2, mods: nextMods });
+      return {
+        identifier: module.identifier,
+        installationPath: canonicalRoot,
+        installedFiles: [],
+        ...(previousRecord !== undefined ? { previousRecord } : {}),
+        backup: { directory: join(canonicalRoot, BACKUP_DIRECTORY, backupId), files: [] },
+      };
+    });
   }
 
   private async installFromDownload(
@@ -758,7 +821,7 @@ export class InstallService {
    * trusting a stale heartbeat of a live process; tests shorten it.
    */
   async cleanupTemporaryFiles(
-    kspPath?: string,
+    kspPaths: readonly string[],
     { recheckDelayMs = JOURNAL_HEARTBEAT_MS + 5_000 }: { recheckDelayMs?: number } = {},
   ): Promise<void> {
     let names: string[] = [];
@@ -775,10 +838,40 @@ export class InstallService {
       }
     }
 
-    if (kspPath === undefined) {
-      return;
+    // Paths are canonicalised before deduplicating, so one installation written
+    // in two forms is recovered once. The first path is the active installation.
+    const seen = new Set<string>();
+    for (const [index, kspPath] of kspPaths.entries()) {
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = await this.fileSystem.realpath(kspPath);
+      } catch (error: unknown) {
+        if (isMissingFile(error)) {
+          console.info(`Skipping startup recovery for ${kspPath}: the folder no longer exists.`);
+        } else {
+          this.recoveryReport.failed.push({ installationPath: kspPath, message: errorMessage(error) });
+          console.warn(`Could not recover installation ${kspPath}: ${errorMessage(error)}`);
+        }
+        continue;
+      }
+      if (index === 0) {
+        this.recoveryReport.activeInstallationPath = canonicalRoot;
+      }
+      if (seen.has(canonicalRoot)) {
+        continue;
+      }
+      seen.add(canonicalRoot);
+      try {
+        await this.recoverInstallation(canonicalRoot, recheckDelayMs);
+      } catch (error: unknown) {
+        this.recoveryReport.failed.push({ installationPath: canonicalRoot, message: errorMessage(error) });
+        console.warn(`Could not recover installation ${canonicalRoot}: ${errorMessage(error)}`);
+      }
     }
-    const canonicalRoot = await this.fileSystem.realpath(kspPath);
+  }
+
+  /** Journal recovery and the untracked-backup check for one canonical installation root. */
+  private async recoverInstallation(canonicalRoot: string, recheckDelayMs: number): Promise<void> {
     const backupRoot = join(canonicalRoot, BACKUP_DIRECTORY);
     const tracked = new Set<string>();
     for (const name of await readDirectoryNames(backupRoot)) {
@@ -795,7 +888,11 @@ export class InstallService {
       await removeDirectoryIfEmpty(backupRoot);
       return;
     }
-    this.recoveryReport.untrackedBackups = { count: untracked.length, directory: backupRoot };
+    (this.recoveryReport.untrackedBackups ??= []).push({
+      installationPath: canonicalRoot,
+      count: untracked.length,
+      directory: backupRoot,
+    });
     console.warn(
       `Found ${untracked.length} backup folder(s) without an install journal in ${backupRoot}. ` +
         "Kraken cannot restore them automatically. They may hold the only copy of a previous mod version, " +
@@ -821,7 +918,7 @@ export class InstallService {
     recheckDelayMs: number,
   ): Promise<void> {
     const reportFailure = (message: string): void => {
-      this.recoveryReport.failed.push({ jobId, message });
+      this.recoveryReport.failed.push({ jobId, installationPath: canonicalRoot, message });
       console.warn(message);
     };
 
@@ -890,6 +987,7 @@ export class InstallService {
         await this.withManifestMutation(() => this.rollBackJournal(canonicalRoot, backupRoot, journal));
         this.recoveryReport.rolledBack.push({
           jobId,
+          installationPath: canonicalRoot,
           modules: journal.modules.map((module) => ({
             identifier: module.identifier,
             name: module.name,
@@ -1045,6 +1143,11 @@ interface InstallBackup {
   directory: string;
   /** Relative paths that were moved and must go back on rollback. */
   files: string[];
+}
+
+/** Metapackages install without a download; everything else needs a non-empty URL and not be DLC. */
+function hasInstallSource(module: CkanModule): boolean {
+  return isInstallable(module) && (module.kind === "metapackage" || (module.download?.length ?? 0) > 0);
 }
 
 /** Hidden folder in the KSP root; KSP only loads GameData, so it is ignored. */

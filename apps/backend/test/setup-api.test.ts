@@ -11,8 +11,8 @@ import { InstallService } from "../src/install-service.js";
 import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { PlatformPort } from "@kraken/core";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -50,7 +50,7 @@ async function createTestApp() {
       join(home, "cache", "downloads"),
     ),
   });
-  return { app, home, ksp };
+  return { app, home, ksp, configPath: join(home, "config", "config.json") };
 }
 
 describe("KSP setup API", () => {
@@ -101,5 +101,37 @@ describe("KSP setup API", () => {
     const response = await request(app).get("/api/v1/config");
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ configured: false });
+  });
+
+  it("remembers every installation that was active, without duplicates", async () => {
+    const { app, home, ksp, configPath } = await createTestApp();
+    const second = join(home, "Other KSP");
+    mkdirSync(second, { recursive: true });
+    writeFileSync(join(second, "KSP.x86_64"), "");
+    writeFileSync(join(second, "readme.txt"), "Version 1.12.5");
+    const readConfig = () => JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+
+    await request(app).put("/api/v1/config").send({ installationPath: ksp }).expect(200);
+    await request(app).put("/api/v1/config").send({ installationPath: second }).expect(200);
+    await request(app).put("/api/v1/config").send({ installationPath: ksp }).expect(200);
+    await request(app).put("/api/v1/config").send({ installationPath: second }).expect(200);
+
+    expect(readConfig()).toEqual({
+      schemaVersion: 2,
+      activeInstallationPath: second,
+      knownInstallationPaths: [await realpath(ksp), await realpath(second)],
+      preferences: {},
+    });
+  });
+
+  it("does not replace an unreadable configuration", async () => {
+    const { app, ksp, configPath } = await createTestApp();
+    mkdirSync(join(configPath, ".."), { recursive: true });
+    writeFileSync(configPath, "not json");
+
+    const response = await request(app).put("/api/v1/config").send({ installationPath: ksp });
+
+    expect(response.status).toBe(500);
+    expect(readFileSync(configPath, "utf8")).toBe("not json");
   });
 });

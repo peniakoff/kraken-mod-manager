@@ -10,12 +10,15 @@ defineEmits<{ dismiss: [] }>();
 
 const modules = computed(() => props.report.rolledBack.flatMap((job) => job.modules));
 const visible = computed(
-  () => modules.value.length > 0 || props.report.failed.length > 0 || props.report.untrackedBackups !== undefined,
+  () => modules.value.length > 0 || props.report.failed.length > 0 || backups.value.length > 0,
 );
-const backupLabel = computed(() => {
-  const count = props.report.untrackedBackups?.count ?? 0;
-  return count === 1 ? "1 backup folder" : `${count} backup folders`;
-});
+const backups = computed(() => props.report.untrackedBackups ?? []);
+const backupCount = computed(() => backups.value.reduce((total, group) => total + group.count, 0));
+const backupLabel = computed(() => (backupCount.value === 1 ? "1 backup folder" : `${backupCount.value} backup folders`));
+
+function isOtherInstallation(installationPath: string): boolean {
+  return installationPath !== props.report.activeInstallationPath;
+}
 </script>
 
 <template>
@@ -29,14 +32,19 @@ const backupLabel = computed(() => {
             <p class="mt-1 text-muted">
               Kraken stopped before an install finished, so it put these mods back the way they were:
             </p>
-            <ul class="mt-2 space-y-1">
-              <li v-for="module in modules" :key="module.identifier" class="text-ink">
-                {{ module.name }}:
-                <span class="readout">{{
-                  module.restoredVersion === undefined ? "removed" : `restored ${module.restoredVersion}`
-                }}</span>
-              </li>
-            </ul>
+            <div v-for="job in report.rolledBack" :key="job.jobId" class="mt-2">
+              <p v-if="isOtherInstallation(job.installationPath)" class="text-muted">
+                in <PathText :path="job.installationPath" />
+              </p>
+              <ul class="space-y-1">
+                <li v-for="module in job.modules" :key="module.identifier" class="text-ink">
+                  {{ module.name }}:
+                  <span class="readout">{{
+                    module.restoredVersion === undefined ? "removed" : `restored ${module.restoredVersion}`
+                  }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -46,12 +54,16 @@ const backupLabel = computed(() => {
             <p class="font-medium">An interrupted install could not be undone</p>
             <p class="mt-1">Its backups were kept. Kraken will try again at the next start.</p>
             <ul class="mt-2 space-y-1 break-words">
-              <li v-for="failure in report.failed" :key="failure.jobId">{{ failure.message }}</li>
+              <li v-for="(failure, index) in report.failed" :key="failure.jobId ?? index">
+                <template v-if="isOtherInstallation(failure.installationPath)"
+                  >in <PathText :path="failure.installationPath" />: </template
+                >{{ failure.message }}
+              </li>
             </ul>
           </div>
         </div>
 
-        <div v-if="report.untrackedBackups !== undefined" class="flex items-start gap-3" role="status">
+        <div v-if="backups.length > 0" class="flex items-start gap-3" role="status">
           <AppIcon name="folder" :size="18" class="mt-0.5 shrink-0 text-warn" />
           <div class="min-w-0">
             <p class="font-medium text-ink">Backups Kraken cannot restore</p>
@@ -60,7 +72,11 @@ const backupLabel = computed(() => {
               install in Kraken 0.5.0 or earlier or from a rollback that failed. They may hold the only copy of a
               previous mod version, so check them before deleting anything:
             </p>
-            <p class="mt-1 text-ink"><PathText :path="report.untrackedBackups.directory" /></p>
+            <p v-for="group in backups" :key="group.directory" class="mt-1 text-ink">
+              <template v-if="isOtherInstallation(group.installationPath)"
+                >in <PathText :path="group.installationPath" />: </template
+              ><PathText :path="group.directory" />
+            </p>
           </div>
         </div>
       </div>

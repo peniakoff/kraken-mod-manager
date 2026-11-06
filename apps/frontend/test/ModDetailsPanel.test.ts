@@ -36,6 +36,18 @@ const sampleModV422 = {
 };
 
 describe("ModDetailsPanel component", () => {
+  it("shows the Install button and a Metapackage badge, without a size, for a metapackage", () => {
+    const { download: _download, ...withoutDownload } = sampleMod;
+    const metapackage = { ...withoutDownload, kind: "metapackage" as const };
+    const wrapper = mount(ModDetailsPanel, {
+      props: { mod: metapackage, versions: [metapackage], kspVersion: "1.12.5", installedMods: [], availableUpdates: [] },
+    });
+
+    expect(wrapper.get('[data-testid="metapackage-badge"]').text()).toBe("Metapackage");
+    expect(wrapper.find('[data-testid="details-install-btn"]').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("Download size");
+  });
+
   it("renders mod information, description, license, and safe project links", () => {
     const wrapper = mount(ModDetailsPanel, {
       props: {

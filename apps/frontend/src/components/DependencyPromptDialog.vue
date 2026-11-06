@@ -156,7 +156,10 @@ useModalFocus({ container: containerRef, onEscape: () => emit("cancel") });
       </template>
       <template v-else>
         <h2 id="dependency-prompt-title" class="text-xl font-semibold">Install {{ prompt.mod.name }}?</h2>
-        <p class="mt-2 text-muted">Other mods work well with it. Pick any to install at the same time.</p>
+        <p v-if="prompt.mod.kind === 'metapackage'" class="mt-2 text-muted">
+          All of its mods are already installed. Kraken will only record {{ prompt.mod.name }}.
+        </p>
+        <p v-else class="mt-2 text-muted">Other mods work well with it. Pick any to install at the same time.</p>
       </template>
 
       <div v-if="prompt.confirmed !== true && optionalGroups.length > 0" class="mt-5 max-h-[45vh] space-y-4 overflow-y-auto pr-1">

@@ -176,9 +176,13 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         sendError(response, 422, "INVALID_INSTALLATION", "The selected directory is not a valid KSP installation.");
         return;
       }
+      // A read failure propagates so an unreadable config is never silently replaced.
+      const previous = await dependencies.configStore.read();
+      const canonicalPath = await dependencies.fileSystem.realpath(installation.path);
       await dependencies.configStore.write({
-        schemaVersion: 1,
+        schemaVersion: 2,
         activeInstallationPath: installation.path,
+        knownInstallationPaths: [...new Set([...(previous?.knownInstallationPaths ?? []), canonicalPath])],
         preferences: {},
       });
       response.json(configResponseSchema.parse({ configured: true, installation }));

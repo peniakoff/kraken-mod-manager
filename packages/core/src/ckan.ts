@@ -67,6 +67,8 @@ export interface CkanModule {
   kspVersionMin?: string;
   kspVersionMax?: string;
   tags: string[];
+  /** Set only for `metapackage` and `dlc`; ordinary packages leave it absent. */
+  kind?: "metapackage" | "dlc";
   /** Virtual package names this module satisfies, excluding its own identifier. */
   provides: string[];
   /** The first usable download URL. */
@@ -114,6 +116,15 @@ export interface CkanSearchResult {
   mods: CkanModule[];
 }
 
+/**
+ * Whether a module can be put into an install plan. Metapackages install
+ * nothing themselves but pull in their dependencies; DLC is never installed
+ * by the manager; everything else needs a download URL.
+ */
+export function isInstallable(module: Pick<CkanModule, "download" | "kind">): boolean {
+  return module.kind === "metapackage" || (module.kind !== "dlc" && module.download !== undefined);
+}
+
 export function parseCkanDocument(raw: unknown): CkanModule | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
@@ -135,6 +146,10 @@ export function parseCkanDocument(raw: unknown): CkanModule | undefined {
     tags: normalizeTags(document.tags),
     provides: parseProvides(document.provides, identifier),
   };
+
+  if (document.kind === "metapackage" || document.kind === "dlc") {
+    module.kind = document.kind;
+  }
 
   const abstractText = asOptionalString(document.abstract);
   if (abstractText !== undefined) {

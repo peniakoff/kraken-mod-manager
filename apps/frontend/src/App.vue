@@ -39,6 +39,7 @@ import InstalledModsView from "./components/InstalledModsView.vue";
 import RecoveryNotice from "./components/RecoveryNotice.vue";
 import SetupView from "./components/SetupView.vue";
 import UninstallDialog from "./components/UninstallDialog.vue";
+import { canInstall } from "./installable.js";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
 import { useInstallQueue } from "./useInstallQueue.js";
 
@@ -342,7 +343,7 @@ function onSelectModVersion(versionMod: CkanModule): void {
 }
 
 async function onInstall(mod: CkanModule): Promise<void> {
-  if (mod.download === undefined) {
+  if (!canInstall(mod)) {
     return;
   }
   setInstallPending(mod.identifier, true);
@@ -392,13 +393,14 @@ async function applyPlan(
   const confirmed = optional.confirmed === true;
 
   const missing = plan.toInstall.filter((entry) => entry.identifier !== mod.identifier);
+  const isMetapackage = mod.kind === "metapackage";
   const planned = plan.toInstall.map((entry) => entry.identifier);
   // After the optional mods are confirmed, dependencies the user was never
   // shown (brought in by the picked mods) need their own confirmation.
   const unseen = confirmed
     ? missing.filter((entry) => !(optional.seen ?? []).includes(entry.identifier) && !selected.includes(entry.identifier))
     : [];
-  if (plan.status === "choice-required" || (!confirmed && (missing.length > 0 || offered.length > 0)) || unseen.length > 0) {
+  if (plan.status === "choice-required" || (!confirmed && (missing.length > 0 || offered.length > 0 || (isMetapackage && optional.offered === undefined))) || unseen.length > 0) {
     setInstallPending(mod.identifier, false);
     const seen = confirmed && plan.status === "choice-required" ? (optional.seen ?? []) : planned;
     dependencyPrompt.value = { mod, plan, choices, offered, selected, confirmed, seen };
@@ -409,7 +411,7 @@ async function applyPlan(
   }
 
   const picked = confirmed ? selected : [];
-  await startInstallJob(mod, missing.length > 0 || picked.length > 0, choices, picked);
+  await startInstallJob(mod, missing.length > 0 || picked.length > 0 || isMetapackage, choices, picked);
 }
 
 async function continueWithChoices(choices: Record<string, string>): Promise<void> {
@@ -436,7 +438,7 @@ async function confirmDependencyInstall(picked: string[]): Promise<void> {
   }
   if (picked.length === 0) {
     const missing = prompt.plan.toInstall.some((entry) => entry.identifier !== prompt.mod.identifier);
-    await startInstallJob(prompt.mod, missing, prompt.choices);
+    await startInstallJob(prompt.mod, missing || prompt.mod.kind === "metapackage", prompt.choices);
     return;
   }
   // Picked mods can bring dependencies, provider choices or conflicts of
@@ -517,7 +519,8 @@ async function onUpdateAll(): Promise<void> {
           skipped.push(`${update.name} (${details.length > 0 ? details : "blocked"})`);
           continue;
         }
-        const needsDependencies = plan.toInstall.some((entry) => entry.identifier !== mod.identifier);
+        const needsDependencies =
+          mod.kind === "metapackage" || plan.toInstall.some((entry) => entry.identifier !== mod.identifier);
         await startInstallJob(mod, needsDependencies);
       } catch (error) {
         skipped.push(`${update.name} (${error instanceof Error ? error.message : "could not be planned"})`);

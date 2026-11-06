@@ -61,6 +61,17 @@ describe("DependencyPromptDialog optional mods", () => {
     expect(wrapper.findAll("button").map((button) => button.text())).toEqual(["Install", "Cancel"]);
   });
 
+  it("says a metapackage with nothing missing is only recorded", () => {
+    const wrapper = mount(DependencyPromptDialog, {
+      props: { prompt: prompt({ mod: { ...mod, kind: "metapackage" } }) },
+    });
+
+    expect(wrapper.get("h2").text()).toBe("Install SCANsat?");
+    expect(wrapper.text()).toContain("All of its mods are already installed. Kraken will only record SCANsat.");
+    expect(wrapper.text()).not.toContain("Other mods work well with it");
+    expect(checkbox(wrapper, "ModuleManager").exists()).toBe(true);
+  });
+
   it("emits the picked optional mods on confirm", async () => {
     const wrapper = mount(DependencyPromptDialog, { props: { prompt: prompt() } });
 

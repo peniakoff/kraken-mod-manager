@@ -60,6 +60,40 @@ describe("BrowseModsView mod browser", () => {
     expect(wrapper.find('[data-testid="update-badge"]').text()).toContain("4.2.4");
   });
 
+  it("offers Install and a Metapackage badge for a metapackage without a download", () => {
+    const metapackage = {
+      identifier: "Bundle",
+      name: "Bundle",
+      authors: ["someone"],
+      version: "1.0.0",
+      tags: [],
+      kind: "metapackage" as const,
+      downloadSize: 4096,
+    };
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, searchResults: [metapackage] } });
+
+    const row = wrapper.get('[data-testid="mod-row"]');
+    expect(row.get('[data-testid="metapackage-badge"]').text()).toBe("Metapackage");
+    expect(row.findAll("button").some((button) => button.text() === "Install")).toBe(true);
+    expect(row.text()).not.toContain("4 KB");
+  });
+
+  it("hides Install for a DLC even when it has a download", () => {
+    const dlc = {
+      identifier: "MakingHistory",
+      name: "Making History",
+      authors: ["Squad"],
+      version: "1.0.0",
+      tags: [],
+      kind: "dlc" as const,
+      download: "https://example.test/dlc.zip",
+    };
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, searchResults: [dlc] } });
+
+    expect(wrapper.findAll("button").some((button) => button.text() === "Install")).toBe(false);
+    expect(wrapper.find('[data-testid="metapackage-badge"]').exists()).toBe(false);
+  });
+
   it("shows an empty state when nothing matches", () => {
     const wrapper = mount(BrowseModsView, { props: { ...baseProps, searchResults: [], searchTotal: 0 } });
     expect(wrapper.text()).toContain("No mods match the current search and filters.");

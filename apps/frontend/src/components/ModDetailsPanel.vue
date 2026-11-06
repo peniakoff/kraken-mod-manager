@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { AvailableUpdate, CkanModule, CkanRelationship, CkanResources, InstalledMod } from "@kraken/contracts";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
+import { canInstall } from "../installable.js";
 import AppIcon from "./AppIcon.vue";
 
 const props = withDefaults(defineProps<{
@@ -231,6 +232,7 @@ onUnmounted(() => {
             <span v-if="availableUpdate !== undefined" class="badge badge-info" data-testid="details-update-badge">
               Update {{ availableUpdate.availableVersion }} available
             </span>
+            <span v-if="currentVersionMod.kind === 'metapackage'" class="badge" data-testid="metapackage-badge">Metapackage</span>
             <span :class="['badge', compat.ok ? '' : 'badge-warn']" data-testid="details-compat-flag">
               <AppIcon :name="compat.ok ? 'check' : 'alert'" :size="14" :class="compat.ok ? 'text-ok' : ''" />
               {{ compat.text }}
@@ -249,7 +251,7 @@ onUnmounted(() => {
               {{ isUninstalling ? "Uninstalling…" : "Uninstall" }}
             </button>
             <button
-              v-if="updateTarget !== undefined && updateTarget.download !== undefined"
+              v-if="updateTarget !== undefined && canInstall(updateTarget)"
               class="btn btn-secondary btn-sm"
               type="button"
               :disabled="isInstalling || isUninstalling"
@@ -259,7 +261,7 @@ onUnmounted(() => {
               Update to {{ updateTarget.version }}
             </button>
             <button
-              v-if="currentVersionMod.download !== undefined"
+              v-if="canInstall(currentVersionMod)"
               class="btn btn-primary btn-sm"
               type="button"
               :aria-disabled="isInstalling || isUninstalling ? 'true' : undefined"
@@ -289,7 +291,7 @@ onUnmounted(() => {
               <span v-if="isLoadingVersions" class="text-[13px] text-muted">Loading versions…</span>
             </div>
           </div>
-          <p v-if="formatDownloadSize(currentVersionMod.downloadSize)" class="text-[13px] text-muted">
+          <p v-if="currentVersionMod.kind !== 'metapackage' && formatDownloadSize(currentVersionMod.downloadSize)" class="text-[13px] text-muted">
             Download size <span class="readout text-ink">{{ formatDownloadSize(currentVersionMod.downloadSize) }}</span>
           </p>
         </div>
