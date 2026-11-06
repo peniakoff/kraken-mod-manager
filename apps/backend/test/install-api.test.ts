@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -174,6 +174,36 @@ function fixtureMetaArchive(
         download_hash: exampleHash,
         depends: [{ name: "DetectedOnly" }],
         install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "NeedsBare" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/PackThenBroken/PackThenBroken-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "PackThenBroken",
+        name: "Pack Then Broken",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/BrokenDependent.zip",
+        download_size: exampleZipSize,
+        download_hash: { sha256: "0".repeat(64), sha1: "0".repeat(40) },
+        depends: [{ name: "ExamplePack" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "PackThenBroken" }],
+      }),
+    },
+    {
+      path: "CKAN-meta-master/NeedsDlc/NeedsDlc-1.0.0.ckan",
+      content: JSON.stringify({
+        identifier: "NeedsDlc",
+        name: "Needs Dlc",
+        author: "Tester",
+        version: "1.0.0",
+        tags: ["plugin"],
+        download: "https://example.test/AnotherMod.zip",
+        download_size: exampleZipSize,
+        download_hash: exampleHash,
+        depends: [{ name: "DlcThing" }],
+        install: [{ file: "GameData/ExampleMod", install_to: "GameData", as: "NeedsDlc" }],
       }),
     },
     {
@@ -1391,6 +1421,24 @@ describe("interrupted install recovery", () => {
     expect(report.activeInstallationPath).toBe(realpathSync(brokenKsp));
   });
 
+  it("reports a failed recovery under the canonical path of a symlinked installation", async () => {
+    const { installService, home } = await createInstallTestApp();
+    const real = createKspFolder(home, "RealKSP");
+    writeFileSync(join(real, ".kraken-backup"), "not a directory");
+    const link = join(home, "LinkKSP");
+    symlinkSync(real, link);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await installService.cleanupTemporaryFiles([link]);
+    } finally {
+      warn.mockRestore();
+    }
+
+    const report = installService.getRecoveryReport();
+    expect(report.failed).toEqual([{ installationPath: realpathSync(real), message: expect.any(String) }]);
+    expect(report.failed[0]?.installationPath).toBe(report.activeInstallationPath);
+  });
+
   it("brings back the previous version after an interrupted update", async () => {
     const zip = new CrashingZip(2, 1);
     const second = zipSync({
@@ -1750,6 +1798,30 @@ describe("metapackages", () => {
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(response.status).toBeLessThan(500);
     expect(response.body.code).toBe("NO_DOWNLOAD");
+  });
+
+  it("rolls back a recorded metapackage when a later module fails", async () => {
+    const { app, home, ksp } = await createInstallTestApp();
+    const accepted = await request(app)
+      .post("/api/v1/mods/PackThenBroken/install")
+      .send({ installDependencies: true });
+    expect(accepted.status).toBe(202);
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("failed");
+
+    expect(readManifestFile(home).mods).toEqual([]);
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
+    expect(existsSync(join(ksp, "GameData", "AnotherMod"))).toBe(false);
+    expect(existsSync(join(ksp, "GameData", "PackThenBroken"))).toBe(false);
+    expect(existsSync(join(ksp, ".kraken-backup"))).toBe(false);
+  });
+
+  it("explains that a DLC dependency cannot be installed", async () => {
+    const { app } = await createInstallTestApp();
+    const response = await request(app).post("/api/v1/mods/NeedsDlc/install").send({ installDependencies: true });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(response.body.code).toBe("NO_DOWNLOAD");
+    expect(response.body.message).toContain("Dependency DlcThing is a DLC that Kraken cannot install.");
   });
 
   it("does not install DLC", async () => {

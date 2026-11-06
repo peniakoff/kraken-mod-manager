@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Interrupted installs are now undone at startup in every KSP installation Kraken has managed, not only the active one; the notice names the installation.
 
+### Known limitations
+- Going back to 0.6.0 after running 0.7.0: the older version cannot read the new configuration file. Close Kraken, delete config.json from the Kraken config folder, start it again and choose the installation.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added

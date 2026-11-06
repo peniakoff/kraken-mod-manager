@@ -415,7 +415,9 @@ export class InstallService {
       const module = this.findModule(ref.identifier, ref.version);
       if (!hasInstallSource(module)) {
         throw new InstallServiceError(
-          `Dependency ${module.identifier} does not declare a download URL.`,
+          module.kind === "dlc"
+            ? `Dependency ${module.identifier} is a DLC that Kraken cannot install.`
+            : `Dependency ${module.identifier} does not declare a download URL.`,
           "NO_DOWNLOAD",
         );
       }
@@ -862,8 +864,8 @@ export class InstallService {
       try {
         await this.recoverInstallation(canonicalRoot, recheckDelayMs);
       } catch (error: unknown) {
-        this.recoveryReport.failed.push({ installationPath: kspPath, message: errorMessage(error) });
-        console.warn(`Could not recover installation ${kspPath}: ${errorMessage(error)}`);
+        this.recoveryReport.failed.push({ installationPath: canonicalRoot, message: errorMessage(error) });
+        console.warn(`Could not recover installation ${canonicalRoot}: ${errorMessage(error)}`);
       }
     }
   }
