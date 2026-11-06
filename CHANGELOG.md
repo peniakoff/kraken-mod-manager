@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Modpacks can be imported from a CKAN .ckan file (for example one made with CKAN's "Export modpack"): Kraken keeps the imported metapackage, installs the mods it lists, and marks it as Imported in the mod list.
 - Metapackages (CKAN modules that only bundle other mods) can be installed: Kraken installs the mods they list and records the metapackage, so it can be updated and uninstalled, and uninstalling it offers to remove the mods it brought in.
 
 ### Changed

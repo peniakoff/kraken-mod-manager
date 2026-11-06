@@ -48,6 +48,18 @@ describe("ModDetailsPanel component", () => {
     expect(wrapper.text()).not.toContain("Download size");
   });
 
+  it("shows an Imported badge for an imported modpack only", () => {
+    const { download: _download, ...withoutDownload } = sampleMod;
+    const imported = { ...withoutDownload, kind: "metapackage" as const, source: "imported" as const };
+    const shared = { kspVersion: "1.12.5", installedMods: [], availableUpdates: [] };
+
+    const wrapper = mount(ModDetailsPanel, { props: { mod: imported, versions: [imported], ...shared } });
+    expect(wrapper.get('[data-testid="imported-badge"]').text()).toBe("Imported");
+
+    const plain = mount(ModDetailsPanel, { props: { mod: sampleMod, versions: [sampleMod], ...shared } });
+    expect(plain.find('[data-testid="imported-badge"]').exists()).toBe(false);
+  });
+
   it("renders mod information, description, license, and safe project links", () => {
     const wrapper = mount(ModDetailsPanel, {
       props: {

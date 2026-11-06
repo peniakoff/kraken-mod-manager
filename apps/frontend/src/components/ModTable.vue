@@ -61,6 +61,7 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
           </span>
           <span v-for="tag in mod.tags.slice(0, 4)" :key="tag" class="badge">{{ tag }}</span>
           <span v-if="mod.kind === 'metapackage'" class="badge" data-testid="metapackage-badge">Metapackage</span>
+          <span v-if="mod.source === 'imported'" class="badge" data-testid="imported-badge">Imported</span>
           <span v-if="mod.kind !== 'metapackage' && formatDownloadSize(mod.downloadSize) !== undefined" class="readout px-1 text-[13px] text-muted">
             {{ formatDownloadSize(mod.downloadSize) }}
           </span>
