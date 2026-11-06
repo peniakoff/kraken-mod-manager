@@ -125,7 +125,7 @@ describe("CKAN registry API", () => {
   });
 
   // v1 predates `provides`, v2 predates download mirrors; both would hide mods or URLs.
-  it.each([1, 2])("treats a schema v%i registry cache as missing", async (schemaVersion) => {
+  it.each([1, 2, 3])("treats a schema v%i registry cache as missing", async (schemaVersion) => {
     const { app, home } = await createRegistryTestApp();
     await mkdir(join(home, "cache"), { recursive: true });
     await writeFile(
@@ -307,7 +307,7 @@ describe("CKAN registry cache recovery", () => {
   }
 
   const emptyCache = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     sourceUrl: "https://example.test/CKAN-meta.tar.gz",
     updatedAt: "2026-11-01T00:00:00.000Z",
     parseErrors: 0,
@@ -325,7 +325,7 @@ describe("CKAN registry cache recovery", () => {
     expect(refreshed.body.status).toBe("ready");
     expect((await request(app).get("/api/v1/registry")).body.status).toBe("ready");
     const stored = JSON.parse(await readFile(join(home, "cache", "registry.json"), "utf8")) as StoredRegistryCache;
-    expect(stored.schemaVersion).toBe(3);
+    expect(stored.schemaVersion).toBe(4);
     expect(stored.modules.length).toBeGreaterThan(0);
   });
 

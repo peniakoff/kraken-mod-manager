@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface StoredRegistryCache {
-  schemaVersion: 3;
+  schemaVersion: 4;
   sourceUrl: string;
   updatedAt: string;
   parseErrors: number;
@@ -52,7 +52,7 @@ export class RegistryCacheStore {
 
   async write(snapshot: RegistrySnapshot): Promise<void> {
     const cache: StoredRegistryCache = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       sourceUrl: snapshot.sourceUrl,
       updatedAt: snapshot.updatedAt,
       parseErrors: snapshot.parseErrors,
@@ -84,7 +84,10 @@ function outdatedSchemaVersion(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value) || !("schemaVersion" in value)) {
     return undefined;
   }
-  return value.schemaVersion === 1 || value.schemaVersion === 2 ? value.schemaVersion : undefined;
+  // v3 caches predate the CKAN `kind` field, so metapackages in them would stay invisible until a manual refresh.
+  return value.schemaVersion === 1 || value.schemaVersion === 2 || value.schemaVersion === 3
+    ? value.schemaVersion
+    : undefined;
 }
 
 function isOutdatedRegistryCache(value: unknown): boolean {
@@ -97,7 +100,7 @@ function isStoredRegistryCache(value: unknown): value is StoredRegistryCache {
   }
   const cache = value as Partial<StoredRegistryCache>;
   return (
-    cache.schemaVersion === 3 &&
+    cache.schemaVersion === 4 &&
     typeof cache.sourceUrl === "string" &&
     cache.sourceUrl.length > 0 &&
     typeof cache.updatedAt === "string" &&
