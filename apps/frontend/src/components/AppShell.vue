@@ -12,7 +12,7 @@ const props = defineProps<{
   serviceVersion?: string;
   status: "checking" | "ready" | "unavailable";
   errorMessage?: string;
-  installJobs: JobResponse[];
+  jobs: JobResponse[];
   installedCount: number;
   kspVersion?: string;
   registry?: RegistryResponse;
@@ -20,8 +20,8 @@ const props = defineProps<{
 
 defineEmits<{
   navigate: [view: AppView];
-  dismissInstall: [jobId: string];
-  clearFinishedInstalls: [];
+  removeJob: [jobId: string];
+  clearFinishedJobs: [];
 }>();
 
 const NAV_ITEMS: Array<{ view: AppView; label: string; icon: IconName }> = [
@@ -60,7 +60,7 @@ const registryText = computed(() => {
 <template>
   <div
     class="cockpit-ground min-h-screen text-ink md:grid md:grid-cols-[15rem_minmax(0,1fr)]"
-    :class="installJobs.length > 0 ? 'pb-72' : ''"
+    :class="jobs.length > 0 ? 'pb-72' : ''"
   >
     <a
       href="#main"
@@ -148,9 +148,9 @@ const registryText = computed(() => {
     </main>
 
     <InstallQueuePanel
-      :jobs="installJobs"
-      @dismiss="$emit('dismissInstall', $event)"
-      @clear-finished="$emit('clearFinishedInstalls')"
+      :jobs="jobs"
+      @remove="$emit('removeJob', $event)"
+      @clear-finished="$emit('clearFinishedJobs')"
     />
   </div>
 </template>

@@ -42,7 +42,7 @@ import SetupView from "./components/SetupView.vue";
 import UninstallDialog from "./components/UninstallDialog.vue";
 import { canInstall } from "./installable.js";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
-import { useInstallQueue } from "./useInstallQueue.js";
+import { moduleIdentifierKey, useJobQueue } from "./useJobQueue.js";
 
 /** Matches the 1 MB body limit of POST /api/v1/modpacks. */
 const MAX_MODPACK_BYTES = 1_048_576;
@@ -86,25 +86,50 @@ const selectedMod = ref<CkanModule>();
 const selectedModVersions = ref<CkanModule[]>([]);
 const isLoadingVersions = ref(false);
 
-const installQueue = useInstallQueue({
+const {
+  jobs,
+  busy,
+  load: loadJobs,
+  add: addInstallJob,
+  remove: removeQueuedJob,
+  clearFinished: clearFinishedJobs,
+} = useJobQueue({
   onSucceeded: () => {
     void refreshInstalledState();
   },
   onFailed: (job) => {
     errorMessage.value = job.error ?? "Install failed.";
   },
+  onLoadError: (error) => {
+    reportError(error, "The job queue could not be loaded.");
+  },
 });
-const {
-  jobs: installJobs,
-  activeIdentifiers: activeInstallIdentifiers,
-  add: addInstallJob,
-  dismiss: dismissInstall,
-  clearFinished: clearFinishedInstalls,
-} = installQueue;
 
+// Task 5 replaces this with per-view busy states.
 const installingIdentifiers = computed(() => [
-  ...new Set([...pendingInstallIdentifiers.value, ...activeInstallIdentifiers.value]),
+  ...new Set([
+    ...pendingInstallIdentifiers.value,
+    ...jobs.value
+      .filter((job) => job.kind === "install" && busy.value.has(moduleIdentifierKey(job.identifier)))
+      .map((job) => job.identifier),
+  ]),
 ]);
+
+async function onRemoveJob(jobId: string): Promise<void> {
+  try {
+    await removeQueuedJob(jobId);
+  } catch (error) {
+    reportError(error, "The job could not be removed.");
+  }
+}
+
+async function onClearFinishedJobs(): Promise<void> {
+  try {
+    await clearFinishedJobs();
+  } catch (error) {
+    reportError(error, "Finished jobs could not be cleared.");
+  }
+}
 
 const effectiveTag = computed(() => {
   // A typed custom tag takes precedence over the selected preset.
@@ -143,6 +168,11 @@ async function loadSetup(): Promise<void> {
       installation.value = config.installation;
       candidates.value = [];
       activeView.value = "dashboard";
+      try {
+        await loadJobs();
+      } catch (error) {
+        reportError(error, "The job queue could not be loaded.");
+      }
       await loadRecoveryReport();
       await loadConfiguredState(config.installation);
     } else {
@@ -643,13 +673,13 @@ onMounted(loadSetup);
     :service-version="version"
     :status="serviceStatus"
     :error-message="errorMessage"
-    :install-jobs="installJobs"
+    :jobs="jobs"
     :installed-count="installedMods.length"
     :ksp-version="installation.version"
     :registry="registry"
     @navigate="activeView = $event"
-    @dismiss-install="dismissInstall"
-    @clear-finished-installs="clearFinishedInstalls"
+    @remove-job="onRemoveJob"
+    @clear-finished-jobs="onClearFinishedJobs"
   >
     <RecoveryNotice v-if="recoveryReport !== undefined" :report="recoveryReport" @dismiss="recoveryReport = undefined" />
     <DashboardView

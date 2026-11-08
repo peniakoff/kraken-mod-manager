@@ -45,6 +45,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -89,6 +90,7 @@ describe("App", () => {
           },
         }, 202);
       }
+      if (url === "/api/v1/jobs/job-1" && init?.method === "DELETE") return new Response(null, { status: 204 });
       if (url.startsWith("/api/v1/mods")) return json({ total: 1, mods: [mod] });
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -128,8 +130,95 @@ describe("App", () => {
     });
     expect(MockEventSource.instances[0]?.closed).toBe(true);
 
-    await wrapper.find('button[aria-label="Dismiss ModuleManager install"]').trigger("click");
-    expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(false);
+    await wrapper.find('button[aria-label="Dismiss Install ModuleManager 4.2.3"]').trigger("click");
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(false));
+  });
+
+  describe("job queue mirroring", () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+
+    function queueFetch(initialJobs: unknown[], onDelete?: (url: string) => Response) {
+      return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+        if (url === "/api/v1/config") {
+          return json({
+            configured: true,
+            installation: { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" },
+          });
+        }
+        if (url === "/api/v1/jobs") return json({ jobs: initialJobs });
+        if (url.startsWith("/api/v1/jobs/") && init?.method === "DELETE") {
+          return onDelete?.(url) ?? new Response(null, { status: 204 });
+        }
+        if (url === "/api/v1/registry") return json({ status: "missing", moduleCount: 0 });
+        if (url === "/api/v1/installed-mods") return json({ mods: [] });
+        if (url === "/api/v1/updates") return json({ updates: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+    }
+
+    it("restores the queue after a reload", async () => {
+      vi.stubGlobal(
+        "fetch",
+        queueFetch([
+          {
+            jobId: "job-9",
+            kind: "install",
+            identifier: "Restored",
+            version: "2.0",
+            status: "running",
+            phase: "downloading",
+            bytesReceived: 50,
+            bytesTotal: 100,
+          },
+        ]),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+
+      await vi.waitFor(() => expect(wrapper.find('[data-job-id="job-9"]').exists()).toBe(true));
+      expect(wrapper.find('[data-job-id="job-9"]').text()).toContain("50%");
+      expect(MockEventSource.instances.map((source) => source.url)).toEqual(["/api/v1/jobs/job-9/events"]);
+    });
+
+    it("calls DELETE for Remove on a queued job and drops it", async () => {
+      const fetchMock = queueFetch([
+        { jobId: "job-q", kind: "install", identifier: "Waiting", status: "queued", phase: "queued" },
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.find('[data-job-id="job-q"]').exists()).toBe(true));
+
+      await wrapper.find('[data-job-id="job-q"] button').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find('[data-job-id="job-q"]').exists()).toBe(false));
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/jobs/job-q", expect.objectContaining({ method: "DELETE" }));
+      expect(MockEventSource.instances[0]?.closed).toBe(true);
+    });
+
+    it("keeps the job and reports the error when Remove fails", async () => {
+      vi.stubGlobal(
+        "fetch",
+        queueFetch(
+          [{ jobId: "job-q", kind: "install", identifier: "Waiting", status: "queued", phase: "queued" }],
+          () => json({ code: "JOB_RUNNING", message: "The job is already running." }, 409),
+        ),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.find('[data-job-id="job-q"]').exists()).toBe(true));
+
+      await wrapper.find('[data-job-id="job-q"] button').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toContain("already running"));
+      expect(wrapper.find('[data-job-id="job-q"]').exists()).toBe(true);
+    });
   });
 
   it("re-plans with choices and installs with them", async () => {
@@ -150,6 +239,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -237,6 +327,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -337,6 +428,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -432,6 +524,7 @@ describe("App", () => {
           { status: 200 },
         ),
       )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jobs: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ rolledBack: [], failed: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "missing", moduleCount: 0 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ mods: [] }), { status: 200 }))
@@ -522,6 +615,7 @@ describe("App", () => {
             { status: 200 },
           ),
         )
+        .mockResolvedValueOnce(new Response(JSON.stringify({ jobs: [] }), { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ rolledBack: [], failed: [] }), { status: 200 }))
         .mockResolvedValueOnce(
           new Response(
@@ -783,6 +877,7 @@ describe("App service status", () => {
     return vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -827,6 +922,7 @@ describe("App service status", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/jobs") return json({ jobs: [] });
         if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
         if (url === "/api/v1/config") {
           return json({
@@ -863,6 +959,7 @@ describe("App service status", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/jobs") return json({ jobs: [] });
         if (url === "/api/v1/config") return json({ code: "CONFIG_ERROR", message: "Config file is malformed." }, 500);
         if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
         throw new Error(`unexpected request ${url}`);
@@ -915,6 +1012,7 @@ describe("App install recovery notice", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/jobs") return json({ jobs: [] });
         if (url === "/api/v1/install-recovery") {
           return json({
             rolledBack: [
@@ -976,6 +1074,7 @@ describe("App optional mods at install", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -1045,6 +1144,7 @@ describe("App optional mods at install", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+      if (url === "/api/v1/jobs") return json({ jobs: [] });
       if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
       if (url === "/api/v1/config") {
         return json({
@@ -1099,6 +1199,7 @@ describe("App optional mods at install", () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url === "/api/v1/health") return jsonResponse({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/jobs") return jsonResponse({ jobs: [] });
         if (url === "/api/v1/install-recovery") return jsonResponse({ rolledBack: [], failed: [] });
         if (url === "/api/v1/config") {
           return jsonResponse({

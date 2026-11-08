@@ -11,6 +11,7 @@ import {
   installationsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  jobsListResponseSchema,
   modDetailsResponseSchema,
   modVersionsResponseSchema,
   modsResponseSchema,
@@ -26,6 +27,7 @@ import {
   type InstallationsResponse,
   type JobProgressEvent,
   type JobResponse,
+  type JobsListResponse,
   type ModDetailsResponse,
   type ModVersionsResponse,
   type ModsResponse,
@@ -224,7 +226,24 @@ export async function getJob(jobId: string): Promise<JobResponse> {
   return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, jobResponseSchema);
 }
 
-export function watchJobProgress(jobId: string, onEvent: (event: JobProgressEvent) => void): () => void {
+export async function listJobs(): Promise<JobsListResponse> {
+  return request("/api/v1/jobs", jobsListResponseSchema);
+}
+
+export async function removeJob(jobId: string): Promise<void> {
+  await requestNoContent(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+}
+
+export async function clearFinishedJobs(): Promise<void> {
+  await requestNoContent("/api/v1/jobs/clear-finished", { method: "POST" });
+}
+
+/** Watches one job's SSE stream; `onError` fires when the stream breaks before a terminal event. */
+export function watchJobProgress(
+  jobId: string,
+  onEvent: (event: JobProgressEvent) => void,
+  onError?: () => void,
+): () => void {
   const source = new EventSource(`/api/v1/jobs/${encodeURIComponent(jobId)}/events`);
   source.onmessage = (message) => {
     if (typeof message.data !== "string") {
@@ -246,10 +265,21 @@ export function watchJobProgress(jobId: string, onEvent: (event: JobProgressEven
   };
   source.onerror = () => {
     source.close();
+    onError?.();
   };
   return () => {
     source.close();
   };
+}
+
+async function requestNoContent(path: string, init: RequestInit): Promise<void> {
+  const response = await send(path, init);
+  if (response.ok) {
+    return;
+  }
+  const payload: unknown = await response.json().catch(() => undefined);
+  const error = apiErrorSchema.safeParse(payload);
+  throw new Error(error.success ? error.data.message : `Request failed with HTTP ${response.status}.`);
 }
 
 async function request<T>(
