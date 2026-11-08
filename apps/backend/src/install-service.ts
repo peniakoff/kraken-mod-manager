@@ -134,12 +134,7 @@ export class InstallService {
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
-    if (this.jobStore.activeIdentifiers().has(moduleIdentifierKey(target.identifier))) {
-      throw new InstallServiceError(
-        `${target.name} already has a queued or running job.`,
-        "JOB_ALREADY_QUEUED",
-      );
-    }
+    this.assertNoActiveJob(target);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
     // Picked optional mods and metapackages (which are nothing but their
@@ -147,6 +142,9 @@ export class InstallService {
     const withDependencies = installDependencies || optional.length > 0 || target.kind === "metapackage";
     const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, withDependencies, choices, optional);
 
+    // Resolving awaits, so a concurrent request may have queued this mod meanwhile.
+    // Check again with no await before the create so the two cannot interleave.
+    this.assertNoActiveJob(target);
     const job = this.jobStore.create("install", identifier, version === undefined ? {} : { version });
     // The user chose the target and each optional mod by name, so none of them
     // is offered for orphan cleanup later.
@@ -206,6 +204,12 @@ export class InstallService {
         error instanceof Error ? error.message : "Uninstall failed.",
         "UNINSTALL_FAILED",
       );
+    }
+  }
+
+  private assertNoActiveJob(target: CkanModule): void {
+    if (this.jobStore.activeIdentifiers().has(moduleIdentifierKey(target.identifier))) {
+      throw new InstallServiceError(`${target.name} already has a queued or running job.`, "JOB_ALREADY_QUEUED");
     }
   }
 

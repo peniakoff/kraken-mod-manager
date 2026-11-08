@@ -2066,4 +2066,35 @@ describe("job queue", () => {
     expect((await waitForJob(app, broken.body.job.jobId)).status).toBe("failed");
     expect((await waitForJob(app, good.body.job.jobId)).status).toBe("succeeded");
   });
+
+  it("accepts only one of two concurrent installs of the same mod", async () => {
+    const { app } = await createInstallTestApp();
+    const [left, right] = await Promise.all([
+      request(app).post("/api/v1/mods/ExampleMod/install").send({ installDependencies: true }),
+      request(app).post("/api/v1/mods/ExampleMod/install").send({ installDependencies: true }),
+    ]);
+    const statuses = [left.status, right.status].sort();
+    expect(statuses).toEqual([202, 409]);
+    const refused = left.status === 409 ? left : right;
+    const accepted = left.status === 202 ? left : right;
+    expect(refused.body.code).toBe("JOB_ALREADY_QUEUED");
+    expect((await waitForJob(app, accepted.body.job.jobId)).status).toBe("succeeded");
+  });
+
+  it("refuses a duplicate of a job that is still queued", async () => {
+    const gate = deferred();
+    const { app } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
+    });
+    const running = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    const queued = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect(queued.status).toBe(202);
+    const duplicate = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe("JOB_ALREADY_QUEUED");
+
+    gate.release();
+    expect((await waitForJob(app, running.body.job.jobId)).status).toBe("succeeded");
+    expect((await waitForJob(app, queued.body.job.jobId)).status).toBe("succeeded");
+  });
 });
