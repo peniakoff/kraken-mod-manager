@@ -8,11 +8,20 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  dismiss: [jobId: string];
+  remove: [jobId: string];
   clearFinished: [];
 }>();
 
 const hasFinished = computed(() => props.jobs.some((job) => isTerminal(job)));
+
+function jobLabel(job: JobResponse): string {
+  const name = job.name ?? job.identifier;
+  if (job.kind === "uninstall") {
+    const more = job.alsoRemove?.length ?? 0;
+    return `Uninstall ${name}${more > 0 ? ` (+${more} more)` : ""}`;
+  }
+  return `Install ${name}${job.version === undefined ? "" : ` ${job.version}`}`;
+}
 
 function isTerminal(job: JobResponse): boolean {
   return job.status === "succeeded" || job.status === "failed";
@@ -43,9 +52,20 @@ function progressText(job: JobResponse): string | undefined {
   return job.bytesTotal === undefined ? received : `${received} / ${formatBytes(job.bytesTotal)}`;
 }
 
+function detailText(job: JobResponse): string {
+  if (job.error !== undefined) {
+    return job.error;
+  }
+  // A waiting job's own message ("Install queued.") only repeats its status.
+  if (job.status === "queued") {
+    return "Waiting for earlier jobs to finish.";
+  }
+  return job.message ?? statusLabel(job);
+}
+
 function statusLabel(job: JobResponse): string {
   if (job.status === "succeeded") {
-    return "Installed";
+    return job.kind === "uninstall" ? "Removed" : "Installed";
   }
   if (job.status === "failed") {
     return "Failed";
@@ -61,12 +81,12 @@ function statusLabel(job: JobResponse): string {
   <aside
     v-if="jobs.length > 0"
     class="fixed inset-x-0 bottom-0 z-30 border-t border-line-strong bg-hull/95 backdrop-blur md:left-60"
-    aria-label="Install queue"
+    aria-label="Queue"
     data-testid="install-queue"
   >
     <div class="mx-auto max-w-6xl px-4 py-4 md:px-10">
       <div class="flex items-center justify-between gap-4">
-        <h2 class="panel-title">Install queue <span class="readout text-[13px] text-muted">{{ jobs.length }}</span></h2>
+        <h2 class="panel-title">Queue <span class="readout text-[13px] text-muted">{{ jobs.length }}</span></h2>
         <button v-if="hasFinished" type="button" class="btn btn-secondary btn-sm" @click="emit('clearFinished')">
           Clear finished
         </button>
@@ -87,8 +107,7 @@ function statusLabel(job: JobResponse): string {
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                 <p class="font-medium">
-                  {{ job.identifier }}
-                  <span v-if="job.version" class="readout text-[13px] text-muted">{{ job.version }}</span>
+                  {{ jobLabel(job) }}
                 </p>
                 <p
                   class="flex items-center gap-2 text-[13px] font-medium"
@@ -99,14 +118,14 @@ function statusLabel(job: JobResponse): string {
                 </p>
               </div>
               <p class="mt-1 text-sm" :class="job.status === 'failed' ? 'text-danger' : 'text-muted'">
-                {{ job.error ?? job.message ?? statusLabel(job) }}
+                {{ detailText(job) }}
               </p>
-              <div v-if="!isTerminal(job)" class="mt-2 flex items-center gap-3">
+              <div v-if="job.status === 'running'" class="mt-2 flex items-center gap-3">
                 <progress
                   class="h-1.5 min-w-0 flex-1 accent-accent"
                   :value="percentage(job)"
                   :max="percentage(job) === undefined ? undefined : 100"
-                  :aria-label="`Install progress for ${job.identifier}`"
+                  :aria-label="`${job.kind === 'uninstall' ? 'Uninstall' : 'Install'} progress for ${job.name ?? job.identifier}`"
                 />
                 <span v-if="percentage(job) !== undefined" class="readout text-[13px]">{{ percentage(job) }}%</span>
                 <span v-else-if="progressText(job) !== undefined" class="readout text-[13px] text-muted">
@@ -115,11 +134,20 @@ function statusLabel(job: JobResponse): string {
               </div>
             </div>
             <button
-              v-if="isTerminal(job)"
+              v-if="job.status === 'queued'"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :aria-label="`Remove ${jobLabel(job)} from the queue`"
+              @click="emit('remove', job.jobId)"
+            >
+              Remove
+            </button>
+            <button
+              v-else-if="isTerminal(job)"
               type="button"
               class="btn btn-icon btn-sm w-8"
-              :aria-label="`Dismiss ${job.identifier} install`"
-              @click="emit('dismiss', job.jobId)"
+              :aria-label="`Dismiss ${jobLabel(job)}`"
+              @click="emit('remove', job.jobId)"
             >
               <AppIcon name="close" />
             </button>

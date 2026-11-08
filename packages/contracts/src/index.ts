@@ -352,22 +352,22 @@ export const uninstallRequestSchema = z.object({
 
 export type UninstallRequest = z.infer<typeof uninstallRequestSchema>;
 
-export const uninstallResponseSchema = z.object({
-  removed: z.array(z.string().min(1)),
-});
-
-export type UninstallResponse = z.infer<typeof uninstallResponseSchema>;
-
 export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
 
 export const jobPhaseSchema = z.enum(["queued", "downloading", "verifying", "extracting", "installing", "done", "failed"]);
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
 
+export const jobKindSchema = z.enum(["install", "uninstall"]);
+
+export type JobKind = z.infer<typeof jobKindSchema>;
+
 export const jobResponseSchema = z.object({
   jobId: z.string().min(1),
-  kind: z.literal("install"),
+  kind: jobKindSchema,
   identifier: z.string().min(1),
+  /** Display name of the mod, so the queue can label jobs after a reload. */
+  name: z.string().min(1).optional(),
   version: z.string().min(1).optional(),
   status: jobStatusSchema,
   phase: jobPhaseSchema,
@@ -375,6 +375,8 @@ export const jobResponseSchema = z.object({
   bytesReceived: z.number().int().nonnegative().optional(),
   bytesTotal: z.number().int().nonnegative().optional(),
   error: z.string().optional(),
+  alsoRemove: z.array(z.string().min(1)).optional(),
+  removed: z.array(z.string().min(1)).optional(),
 });
 
 export type JobResponse = z.infer<typeof jobResponseSchema>;
@@ -384,6 +386,18 @@ export const installAcceptedResponseSchema = z.object({
 });
 
 export type InstallAcceptedResponse = z.infer<typeof installAcceptedResponseSchema>;
+
+export const uninstallAcceptedResponseSchema = z.object({
+  job: jobResponseSchema,
+});
+
+export type UninstallAcceptedResponse = z.infer<typeof uninstallAcceptedResponseSchema>;
+
+export const jobsListResponseSchema = z.object({
+  jobs: z.array(jobResponseSchema),
+});
+
+export type JobsListResponse = z.infer<typeof jobsListResponseSchema>;
 
 export const jobProgressEventSchema = z.object({
   jobId: z.string().min(1),

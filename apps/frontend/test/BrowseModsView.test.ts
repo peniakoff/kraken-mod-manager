@@ -32,8 +32,7 @@ const baseProps = {
   availableUpdates: [
     { identifier: "ModuleManager", name: "Module Manager", installedVersion: "4.2.3", availableVersion: "4.2.4" },
   ],
-  installingIdentifiers: [],
-  uninstallingIdentifier: undefined,
+  busy: new Map(),
   dependencyPrompt: undefined,
   selectedTag: "",
   customTag: "",
@@ -247,10 +246,21 @@ describe("BrowseModsView provider choices", () => {
 
 describe("BrowseModsView install button while an install is pending", () => {
   it("stays focusable but inert, so focus can return to it after a dialog", async () => {
-    const wrapper = mount(BrowseModsView, { props: { ...baseProps, installingIdentifiers: ["ModuleManager"] } });
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, busy: new Map([["modulemanager", "installing" as const]]) } });
     const install = wrapper.findAll("button").find((button) => button.text() === "Installing…")!;
 
     expect(install.attributes("disabled")).toBeUndefined();
+    expect(install.attributes("aria-disabled")).toBe("true");
+    await install.trigger("click");
+    expect(wrapper.emitted("install")).toBeUndefined();
+  });
+});
+
+describe("BrowseModsView install button for a queued mod", () => {
+  it("shows Queued and stays inert", async () => {
+    const wrapper = mount(BrowseModsView, { props: { ...baseProps, busy: new Map([["modulemanager", "queued" as const]]) } });
+    const install = wrapper.findAll("button").find((button) => button.text() === "Queued")!;
+
     expect(install.attributes("aria-disabled")).toBe("true");
     await install.trigger("click");
     expect(wrapper.emitted("install")).toBeUndefined();

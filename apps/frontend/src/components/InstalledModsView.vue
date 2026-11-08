@@ -3,15 +3,15 @@ import { computed, ref } from "vue";
 import type { AvailableUpdate, InstalledMod } from "@kraken/contracts";
 import AppIcon from "./AppIcon.vue";
 import ViewHeader from "./ViewHeader.vue";
+import { moduleIdentifierKey, type BusyState } from "../useJobQueue.js";
 
 const props = withDefaults(
   defineProps<{
     installedMods: InstalledMod[];
     availableUpdates: AvailableUpdate[];
-    installingIdentifiers?: string[];
-    uninstallingIdentifier?: string;
+    busy?: Map<string, BusyState>;
   }>(),
-  { installingIdentifiers: () => [] },
+  { busy: () => new Map() },
 );
 
 const emit = defineEmits<{
@@ -64,8 +64,18 @@ const visibleRows = computed(() =>
 
 const managedCount = computed(() => props.installedMods.filter((mod) => mod.status === "managed").length);
 
-function isBusy(identifier: string): boolean {
-  return props.installingIdentifiers.includes(identifier) || props.uninstallingIdentifier === identifier;
+function busyState(identifier: string): BusyState | undefined {
+  return props.busy.get(moduleIdentifierKey(identifier));
+}
+
+function updateLabel(identifier: string): string {
+  const state = busyState(identifier);
+  return state === "queued" ? "Queued" : state === "installing" ? "Updating…" : state === "uninstalling" ? "Uninstalling…" : "Update";
+}
+
+function uninstallLabel(identifier: string): string {
+  const state = busyState(identifier);
+  return state === "queued" ? "Queued" : state === "installing" ? "Installing…" : state === "uninstalling" ? "Uninstalling…" : "Uninstall";
 }
 </script>
 
@@ -145,10 +155,10 @@ function isBusy(identifier: string): boolean {
                   type="button"
                   data-testid="installed-update-btn"
                   :aria-label="`Update ${mod.name ?? mod.identifier} to ${update.availableVersion}`"
-                  :disabled="isBusy(mod.identifier)"
-                  @click="emit('update', update)"
+                  :aria-disabled="busyState(mod.identifier) !== undefined ? 'true' : undefined"
+                  @click="busyState(mod.identifier) === undefined && emit('update', update)"
                 >
-                  {{ installingIdentifiers.includes(mod.identifier) ? "Updating…" : "Update" }}
+                  {{ updateLabel(mod.identifier) }}
                 </button>
                 <button
                   v-if="mod.status === 'managed'"
@@ -156,11 +166,11 @@ function isBusy(identifier: string): boolean {
                   type="button"
                   data-testid="installed-uninstall-btn"
                   :aria-label="`Uninstall ${mod.name ?? mod.identifier}`"
-                  :disabled="isBusy(mod.identifier)"
-                  @click="emit('uninstall', mod)"
+                  :aria-disabled="busyState(mod.identifier) !== undefined ? 'true' : undefined"
+                  @click="busyState(mod.identifier) === undefined && emit('uninstall', mod)"
                 >
                   <AppIcon name="trash" />
-                  <span class="hidden sm:inline">{{ uninstallingIdentifier === mod.identifier ? "Uninstalling…" : "Uninstall" }}</span>
+                  <span class="hidden sm:inline">{{ uninstallLabel(mod.identifier) }}</span>
                 </button>
               </div>
             </td>

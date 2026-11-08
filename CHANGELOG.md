@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Installs and uninstalls share one queue and run one at a time in the order you add them; the queue stays after a page reload, and jobs that have not started can be removed.
+
 ### Changed
+- A mod with a queued or running job cannot be installed, updated or uninstalled again until that job finishes.
+- The error bar stays at the top of the window while scrolling and can be dismissed.
+- `POST /api/v1/mods/:identifier/uninstall` now answers 202 with a queued job instead of the removed list; `GET /api/v1/jobs`, `DELETE /api/v1/jobs/:jobId` and `POST /api/v1/jobs/clear-finished` manage the queue.
 - CI and release builds now produce only the Linux binary; Windows and macOS binaries are no longer built on GitHub or attached to releases. Build them locally with `pnpm package:sea`.
 
 ## [0.7.0] - 2026-11-06

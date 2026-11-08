@@ -13,6 +13,7 @@ import {
   importModpackResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  jobsListResponseSchema,
   modDetailsResponseSchema,
   modVersionsResponseSchema,
   modsQuerySchema,
@@ -21,7 +22,7 @@ import {
   registryResponseSchema,
   uninstallPlanResponseSchema,
   uninstallRequestSchema,
-  uninstallResponseSchema,
+  uninstallAcceptedResponseSchema,
   updateConfigRequestSchema,
   updatesResponseSchema,
 } from "@kraken/contracts";
@@ -54,6 +55,7 @@ import {
   ZipArchiveError,
   InstallPolicyError,
 } from "./install-service.js";
+import { JobQueue } from "./job-queue.js";
 import { JobStore } from "./job-store.js";
 import {
   getFrontendContentType,
@@ -108,6 +110,7 @@ export function createDefaultDependencies(frontendDirectory = process.env.KMM_FR
       new ZipArchive(),
       new InstallManifestStore(getInstallManifestFilePath(platform)),
       new JobStore(),
+      new JobQueue(),
       getDownloadCacheDirectory(platform),
     ),
   };
@@ -472,8 +475,34 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         sendError(response, 409, "NOT_CONFIGURED", "Configure a KSP installation before managing mods.");
         return;
       }
-      const removed = await dependencies.installService.uninstall(kspPath, identifier, body.data.alsoRemove);
-      response.json(uninstallResponseSchema.parse({ removed }));
+      const job = await dependencies.installService.startUninstall(kspPath, identifier, body.data.alsoRemove);
+      response.status(202).json(uninstallAcceptedResponseSchema.parse({ job }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/v1/jobs", (_request, response, next) => {
+    try {
+      response.json(jobsListResponseSchema.parse({ jobs: dependencies.installService.listJobs() }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/v1/jobs/clear-finished", (_request, response, next) => {
+    try {
+      dependencies.installService.clearFinishedJobs();
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/v1/jobs/:jobId", (request, response, next) => {
+    try {
+      dependencies.installService.removeJob(request.params.jobId);
+      response.status(204).end();
     } catch (error) {
       next(error);
     }
@@ -633,7 +662,8 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         error.code === "NOT_CONFIGURED" ||
         error.code === "PLAN_NOT_READY" ||
         error.code === "UNINSTALL_PLAN_MISMATCH" ||
-        error.code === "INSTALL_IN_PROGRESS"
+        error.code === "JOB_ALREADY_QUEUED" ||
+        error.code === "JOB_RUNNING"
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404

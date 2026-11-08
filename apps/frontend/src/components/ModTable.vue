@@ -4,6 +4,7 @@ import type { AvailableUpdate, CkanModule, InstalledMod } from "@kraken/contract
 import AppIcon from "./AppIcon.vue";
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
 import { canInstall } from "../installable.js";
+import { moduleIdentifierKey, type BusyState } from "../useJobQueue.js";
 
 const props = defineProps<{
   mods: CkanModule[];
@@ -11,7 +12,7 @@ const props = defineProps<{
   compatibleOnly: boolean;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifiers: string[];
+  busy: Map<string, BusyState>;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +22,15 @@ const emit = defineEmits<{
 
 const installedById = computed(() => new Map(props.installedMods.map((mod) => [mod.identifier, mod])));
 const updatesById = computed(() => new Map(props.availableUpdates.map((update) => [update.identifier, update])));
+
+function installLabel(mod: CkanModule): string {
+  const state = props.busy.get(moduleIdentifierKey(mod.identifier));
+  return state === "queued" ? "Queued" : state === "installing" ? "Installing…" : state === "uninstalling" ? "Uninstalling…" : "Install";
+}
+
+function isBusy(mod: CkanModule): boolean {
+  return props.busy.has(moduleIdentifierKey(mod.identifier));
+}
 
 function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
   if (props.kspVersion === undefined) {
@@ -92,11 +102,12 @@ function compatLabel(mod: CkanModule): { text: string; ok: boolean } {
           v-if="canInstall(mod)"
           class="btn btn-primary btn-sm"
           type="button"
-          :aria-disabled="installingIdentifiers.includes(mod.identifier) ? 'true' : undefined"
-          @click="!installingIdentifiers.includes(mod.identifier) && emit('install', mod)"
+          :aria-label="isBusy(mod) ? `Install ${mod.name}` : undefined"
+          :aria-disabled="isBusy(mod) ? 'true' : undefined"
+          @click="!isBusy(mod) && emit('install', mod)"
         >
           <AppIcon name="download" />
-          {{ installingIdentifiers.includes(mod.identifier) ? "Installing…" : "Install" }}
+          {{ installLabel(mod) }}
         </button>
       </div>
     </li>

@@ -4,6 +4,7 @@ import {
   InstallPolicyError,
   isAllowedDestination,
   isInstallable,
+  moduleIdentifierKey,
   normalizeSlashPath,
   planUninstall,
   resolveInstallMappings,
@@ -39,6 +40,7 @@ import {
 } from "./adapters/install-manifest-store.js";
 import { StreamingHttp, StreamingHttpError } from "./adapters/streaming-http.js";
 import { ZipArchive, ZipArchiveError, type ZipEntryInfo } from "./adapters/zip-archive.js";
+import type { JobQueue } from "./job-queue.js";
 import { JobStore } from "./job-store.js";
 import type { RegistryService } from "./registry-service.js";
 
@@ -52,11 +54,12 @@ export class InstallServiceError extends Error {
       | "INSTALL_FAILED"
       | "UNINSTALL_FAILED"
       | "JOB_NOT_FOUND"
+      | "JOB_ALREADY_QUEUED"
+      | "JOB_RUNNING"
       | "NOT_MANAGED"
       | "PLAN_BLOCKED"
       | "PLAN_NOT_READY"
-      | "UNINSTALL_PLAN_MISMATCH"
-      | "INSTALL_IN_PROGRESS",
+      | "UNINSTALL_PLAN_MISMATCH",
   ) {
     super(message);
     this.name = "InstallServiceError";
@@ -74,8 +77,16 @@ export class InstallService {
     private readonly zip: ZipArchive,
     private readonly manifestStore: InstallManifestStore,
     private readonly jobStore: JobStore,
+    private readonly jobQueue: JobQueue,
     private readonly downloadCacheDirectory: string,
-  ) {}
+  ) {
+    // A run() that rejects outside its own handling would leave the job
+    // "running" forever, blocking the mod and the DELETE route.
+    this.jobQueue.setRunErrorHandler((jobId, error) => {
+      const message = error instanceof Error ? error.message : "The job failed unexpectedly.";
+      this.jobStore.update(jobId, { status: "failed", phase: "failed", error: message, message });
+    });
+  }
 
   async listInstalled(kspPath: string): Promise<InstalledModSummary[]> {
     await this.registryService.ensureLoaded();
@@ -131,23 +142,28 @@ export class InstallService {
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
+    this.assertNoActiveJob([target.identifier]);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
     // Picked optional mods and metapackages (which are nothing but their
     // dependencies) need the resolver, so they imply dependency resolution.
-    const modulesToInstall = await this.resolveModulesForInstall(
-      kspPath,
-      target,
-      installDependencies || optional.length > 0 || target.kind === "metapackage",
-      choices,
-      optional,
-    );
+    const withDependencies = installDependencies || optional.length > 0 || target.kind === "metapackage";
+    const modulesToInstall = await this.resolveModulesForInstall(kspPath, target, withDependencies, choices, optional);
 
-    const job = this.jobStore.create(identifier, version);
+    // Resolving awaits, so a concurrent request may have queued this mod meanwhile.
+    // Check again with no await before the create so the two cannot interleave.
+    this.assertNoActiveJob([target.identifier]);
+    const job = this.jobStore.create("install", identifier, {
+      name: target.name,
+      ...(version === undefined ? {} : { version }),
+    });
     // The user chose the target and each optional mod by name, so none of them
     // is offered for orphan cleanup later.
     const manualIdentifiers = new Set([target.identifier, ...optional]);
-    void this.runInstall(job.jobId, kspPath, target, modulesToInstall, manualIdentifiers);
+    const resolveArguments: ResolveArguments = { withDependencies, choices, optional };
+    this.jobQueue.enqueue(job.jobId, () =>
+      this.runInstall(job.jobId, kspPath, target, modulesToInstall, manualIdentifiers, resolveArguments),
+    );
     return this.jobStore.toResponse(job);
   }
 
@@ -172,45 +188,107 @@ export class InstallService {
   }
 
   /**
-   * Recomputes the plan, checks the client's selection against it and
-   * removes the mods in dependency order. Returns the removed identifiers.
+   * Validates the selection against the current plan, then queues the removal.
+   * The queued run validates again because earlier jobs may change the plan.
    */
-  async uninstall(kspPath: string, identifier: string, alsoRemove: readonly string[]): Promise<string[]> {
-    try {
-      return await this.withManifestMutation(async () => {
-        const options = await this.uninstallOptions(kspPath, identifier);
-        const selection = validateUninstallSelection(planUninstall(options), alsoRemove, options);
-        if (!selection.ok) {
-          throw new InstallServiceError(selection.problems.join(" "), "UNINSTALL_PLAN_MISMATCH");
-        }
+  async startUninstall(kspPath: string, identifier: string, alsoRemove: readonly string[]): Promise<JobResponse> {
+    this.assertNoActiveJob([identifier, ...alsoRemove]);
+    await this.validateUninstall(kspPath, identifier, alsoRemove);
 
+    // Validation awaits, so a concurrent request may have queued the same mods meanwhile.
+    // Check again with no await before the create so the two cannot interleave.
+    this.assertNoActiveJob([identifier, ...alsoRemove]);
+    const job = this.jobStore.create("uninstall", identifier, {
+      name: this.displayName(identifier),
+      alsoRemove: [...alsoRemove],
+    });
+    this.jobQueue.enqueue(job.jobId, () => this.runUninstall(job.jobId, kspPath, identifier, alsoRemove));
+    return this.jobStore.toResponse(job);
+  }
+
+  listJobs(): JobResponse[] {
+    return this.jobStore.list();
+  }
+
+  /** Cancels a queued job, hides a finished one, and refuses a running one. */
+  removeJob(jobId: string): void {
+    const job = this.jobStore.get(jobId);
+    if (job === undefined) {
+      throw new InstallServiceError("Unknown job.", "JOB_NOT_FOUND");
+    }
+    if (job.status === "succeeded" || job.status === "failed") {
+      this.jobStore.hide(jobId);
+      return;
+    }
+    // cancel() is false when the queue picked the job in the meantime.
+    if (job.status === "queued" && this.jobQueue.cancel(jobId)) {
+      this.jobStore.delete(jobId);
+      return;
+    }
+    throw new InstallServiceError("This job is running and cannot be removed.", "JOB_RUNNING");
+  }
+
+  clearFinishedJobs(): void {
+    this.jobStore.hideFinished();
+  }
+
+  private async validateUninstall(
+    kspPath: string,
+    identifier: string,
+    alsoRemove: readonly string[],
+  ): Promise<string[]> {
+    const options = await this.uninstallOptions(kspPath, identifier);
+    const selection = validateUninstallSelection(planUninstall(options), alsoRemove, options);
+    if (!selection.ok) {
+      throw new InstallServiceError(selection.problems.join(" "), "UNINSTALL_PLAN_MISMATCH");
+    }
+    return selection.removeOrder;
+  }
+
+  private async runUninstall(
+    jobId: string,
+    kspPath: string,
+    identifier: string,
+    alsoRemove: readonly string[],
+  ): Promise<void> {
+    this.jobStore.update(jobId, {
+      status: "running",
+      phase: "installing",
+      message: `Removing ${this.displayName(identifier)}.`,
+    });
+    try {
+      const removed = await this.withManifestMutation(async () => {
+        const removeOrder = await this.validateUninstall(kspPath, identifier, alsoRemove);
         const canonicalRoot = await this.fileSystem.realpath(kspPath);
         let manifest = await this.manifestStore.read();
-        for (const removedIdentifier of selection.removeOrder) {
+        for (const removedIdentifier of removeOrder) {
           manifest = await this.removeManagedMod(canonicalRoot, manifest, removedIdentifier);
         }
-        return selection.removeOrder;
+        return removeOrder;
       });
+      this.jobStore.update(jobId, { status: "succeeded", phase: "done", removed });
     } catch (error: unknown) {
-      if (error instanceof InstallServiceError) {
-        throw error;
-      }
+      const message = error instanceof Error ? error.message : "Uninstall failed.";
+      this.jobStore.update(jobId, { status: "failed", phase: "failed", error: message, message });
+    }
+  }
+
+  private displayName(identifier: string): string {
+    return this.registryService.findModule(identifier)?.name ?? identifier;
+  }
+
+  private assertNoActiveJob(identifiers: readonly string[]): void {
+    const active = this.jobStore.activeIdentifiers();
+    const busy = identifiers.find((identifier) => active.has(moduleIdentifierKey(identifier)));
+    if (busy !== undefined) {
       throw new InstallServiceError(
-        error instanceof Error ? error.message : "Uninstall failed.",
-        "UNINSTALL_FAILED",
+        `${this.displayName(busy)} already has a queued or running job.`,
+        "JOB_ALREADY_QUEUED",
       );
     }
   }
 
   private async uninstallOptions(kspPath: string, identifier: string): Promise<PlanUninstallOptions> {
-    // An install writes each dependency's record before its target, so a
-    // dependency would look orphaned mid-install and could be removed.
-    if (this.jobStore.hasActiveJobs()) {
-      throw new InstallServiceError(
-        "Wait for running installs to finish before uninstalling.",
-        "INSTALL_IN_PROGRESS",
-      );
-    }
     const inventory = await this.listInstalled(kspPath);
     const canonicalRoot = await this.fileSystem.realpath(kspPath);
     const manifest = await this.manifestStore.read();
@@ -271,13 +349,24 @@ export class InstallService {
     jobId: string,
     kspPath: string,
     target: CkanModule,
-    modulesToInstall: readonly CkanModule[],
+    acceptedModules: readonly CkanModule[],
     manualIdentifiers: ReadonlySet<string>,
+    resolveArguments: ResolveArguments,
   ): Promise<void> {
     const completed: ModuleInstallSnapshot[] = [];
     let journal: InstallJournal | undefined;
+    let modulesToInstall: readonly CkanModule[];
     try {
       this.jobStore.update(jobId, { status: "running", phase: "downloading", message: "Resolving module metadata." });
+      // The queue may have waited while other jobs changed the installation,
+      // so the plan accepted earlier is checked again before any file is touched.
+      modulesToInstall = await this.recheckPlan(kspPath, target, acceptedModules, resolveArguments);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Install failed.";
+      this.jobStore.update(jobId, { status: "failed", phase: "failed", error: message, message });
+      return;
+    }
+    try {
       const canonicalRoot = await this.fileSystem.realpath(kspPath);
       journal = new InstallJournal(join(canonicalRoot, BACKUP_DIRECTORY, journalFileName(jobId)));
 
@@ -311,6 +400,35 @@ export class InstallService {
       message: "Install completed.",
       version: target.version,
     });
+  }
+
+  /**
+   * Resolves the plan again at start. Modules that were not part of the
+   * accepted plan fail the job rather than being installed unreviewed; accepted
+   * modules that are no longer needed are simply skipped.
+   */
+  private async recheckPlan(
+    kspPath: string,
+    target: CkanModule,
+    accepted: readonly CkanModule[],
+    resolveArguments: ResolveArguments,
+  ): Promise<CkanModule[]> {
+    const current = await this.resolveModulesForInstall(
+      kspPath,
+      target,
+      resolveArguments.withDependencies,
+      resolveArguments.choices,
+      resolveArguments.optional,
+    );
+    const acceptedKeys = new Set(accepted.map(planKey));
+    const added = current.filter((module) => !acceptedKeys.has(planKey(module)));
+    if (added.length > 0) {
+      throw new InstallServiceError(
+        `The install plan changed after it was queued: it now also needs ${added.map((module) => module.name).join(", ")}.`,
+        "PLAN_NOT_READY",
+      );
+    }
+    return current;
   }
 
   private async failInstall(
@@ -1148,6 +1266,16 @@ interface InstallBackup {
 /** Metapackages install without a download; everything else needs a non-empty URL and not be DLC. */
 function hasInstallSource(module: CkanModule): boolean {
   return isInstallable(module) && (module.kind === "metapackage" || (module.download?.length ?? 0) > 0);
+}
+
+interface ResolveArguments {
+  withDependencies: boolean;
+  choices: Readonly<Record<string, string>> | undefined;
+  optional: readonly string[];
+}
+
+function planKey(module: CkanModule): string {
+  return `${moduleIdentifierKey(module.identifier)}@${module.version}`;
 }
 
 /** Hidden folder in the KSP root; KSP only loads GameData, so it is ignored. */

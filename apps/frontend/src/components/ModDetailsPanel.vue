@@ -4,6 +4,7 @@ import type { AvailableUpdate, CkanModule, CkanRelationship, CkanResources, Inst
 import { formatDownloadSize, isCompatibleWithKsp } from "../compat.js";
 import { canInstall } from "../installable.js";
 import AppIcon from "./AppIcon.vue";
+import { moduleIdentifierKey, type BusyState } from "../useJobQueue.js";
 
 const props = withDefaults(defineProps<{
   mod: CkanModule;
@@ -11,11 +12,10 @@ const props = withDefaults(defineProps<{
   kspVersion?: string;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifiers?: string[];
-  uninstallingIdentifier?: string;
+  busy?: Map<string, BusyState>;
   isLoadingVersions?: boolean;
 }>(), {
-  installingIdentifiers: () => [],
+  busy: () => new Map(),
 });
 
 const emit = defineEmits<{
@@ -66,8 +66,20 @@ const compat = computed(() => {
   return ok ? { text: `Compatible with KSP ${props.kspVersion}`, ok: true } : { text: "May not be compatible", ok: false };
 });
 
-const isInstalling = computed(() => props.installingIdentifiers.includes(props.mod.identifier));
-const isUninstalling = computed(() => props.uninstallingIdentifier === props.mod.identifier);
+const busyState = computed(() => props.busy.get(moduleIdentifierKey(props.mod.identifier)));
+const isBusy = computed(() => busyState.value !== undefined);
+const queuedOrUninstalling = computed(() =>
+  busyState.value === "queued" ? "Queued" : busyState.value === "uninstalling" ? "Uninstalling…" : undefined,
+);
+const uninstallLabel = computed(
+  () => queuedOrUninstalling.value ?? (busyState.value === "installing" ? "Installing…" : "Uninstall"),
+);
+const updateLabel = computed(
+  () => queuedOrUninstalling.value ?? (busyState.value === "installing" ? "Updating…" : undefined),
+);
+const installLabel = computed(
+  () => queuedOrUninstalling.value ?? (busyState.value === "installing" ? "Installing…" : undefined),
+);
 
 function isSafeUrl(url: string | undefined): boolean {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -245,31 +257,34 @@ onUnmounted(() => {
               v-if="isManaged"
               class="btn btn-danger btn-sm"
               type="button"
-              :disabled="isUninstalling || isInstalling"
+              :aria-label="isBusy ? `Uninstall ${mod.name}` : undefined"
+              :aria-disabled="isBusy ? 'true' : undefined"
               data-testid="details-uninstall-btn"
-              @click="installedMod && emit('uninstall', installedMod)"
+              @click="!isBusy && installedMod && emit('uninstall', installedMod)"
             >
-              {{ isUninstalling ? "Uninstalling…" : "Uninstall" }}
+              {{ uninstallLabel }}
             </button>
             <button
               v-if="updateTarget !== undefined && canInstall(updateTarget)"
               class="btn btn-secondary btn-sm"
               type="button"
-              :disabled="isInstalling || isUninstalling"
+              :aria-label="isBusy ? `Update ${mod.name} to ${updateTarget.version}` : undefined"
+              :aria-disabled="isBusy ? 'true' : undefined"
               data-testid="details-update-btn"
-              @click="emit('install', updateTarget)"
+              @click="!isBusy && emit('install', updateTarget)"
             >
-              Update to {{ updateTarget.version }}
+              {{ updateLabel ?? `Update to ${updateTarget.version}` }}
             </button>
             <button
               v-if="canInstall(currentVersionMod)"
               class="btn btn-primary btn-sm"
               type="button"
-              :aria-disabled="isInstalling || isUninstalling ? 'true' : undefined"
+              :aria-label="isBusy ? `${isInstalled ? 'Reinstall' : 'Install'} ${mod.name}` : undefined"
+              :aria-disabled="isBusy ? 'true' : undefined"
               data-testid="details-install-btn"
-              @click="!isInstalling && !isUninstalling && emit('install', currentVersionMod)"
+              @click="!isBusy && emit('install', currentVersionMod)"
             >
-              {{ isInstalling ? "Installing…" : isInstalled ? "Reinstall" : "Install" }}
+              {{ installLabel ?? (isInstalled ? "Reinstall" : "Install") }}
             </button>
           </div>
         </div>

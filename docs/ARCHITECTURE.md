@@ -69,6 +69,15 @@ failed rollback would let the next start undo a later install of the same mod.
 Durability covers a crashed or killed process; after a power loss the last
 unsynced `file` lines can be missing, which leaves stray files but loses none.
 
+## Job queue
+
+Installs and uninstalls share one FIFO queue held in memory; one job runs at a
+time and later jobs wait as `queued`. A job's plan is checked again when it
+starts, because earlier jobs may have changed the installation, and a job whose
+plan no longer holds fails without touching files. Queued jobs can be cancelled
+and finished ones hidden; a running job cannot be removed. The queue is lost on
+a server restart, and the journal still undoes the install that was running.
+
 ## Packaging direction
 
 Node SEA is an eventual delivery target, not a runtime requirement of local
