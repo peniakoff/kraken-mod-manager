@@ -11,8 +11,6 @@ const props = {
   availableUpdates: [
     { identifier: "MechJeb2", name: "MechJeb 2", installedVersion: "2.15.4.0", availableVersion: "2.15.5.0" },
   ],
-  installingIdentifiers: [],
-  uninstallingIdentifier: undefined,
 } as const;
 
 function rows(wrapper: ReturnType<typeof mount>) {
@@ -63,6 +61,32 @@ describe("InstalledModsView", () => {
     await update.trigger("click");
 
     expect(wrapper.emitted("update")).toEqual([[props.availableUpdates[0]]]);
+  });
+
+  it("blocks Update and Uninstall for a mod with a queued job, without emitting", async () => {
+    const busy = new Map([["mechjeb2", "queued" as const]]);
+    const wrapper = mount(InstalledModsView, { props: { ...props, busy } });
+    const row = rows(wrapper)[1]!;
+    const uninstall = row.find('[data-testid="installed-uninstall-btn"]');
+    const update = row.find('[data-testid="installed-update-btn"]');
+
+    expect(uninstall.attributes("aria-disabled")).toBe("true");
+    expect(uninstall.text()).toBe("Queued");
+    expect(uninstall.attributes("aria-label")).toBe("Uninstall MechJeb 2");
+    expect(update.attributes("aria-disabled")).toBe("true");
+    await uninstall.trigger("click");
+    await update.trigger("click");
+    expect(wrapper.emitted("uninstall")).toBeUndefined();
+    expect(wrapper.emitted("update")).toBeUndefined();
+  });
+
+  it("shows Uninstalling… and Updating… for running jobs", () => {
+    const wrapper = mount(InstalledModsView, {
+      props: { ...props, busy: new Map([["modulemanager", "uninstalling" as const], ["mechjeb2", "installing" as const]]) },
+    });
+
+    expect(rows(wrapper)[0]!.find('[data-testid="installed-uninstall-btn"]').text()).toBe("Uninstalling…");
+    expect(rows(wrapper)[1]!.find('[data-testid="installed-update-btn"]').text()).toBe("Updating…");
   });
 
   it("shows an empty state when nothing is installed", () => {

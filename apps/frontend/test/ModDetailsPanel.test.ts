@@ -257,7 +257,7 @@ describe("ModDetailsPanel component", () => {
 
   it("keeps the install button focusable but inert while the mod is installing", async () => {
     const wrapper = mount(ModDetailsPanel, {
-      props: { mod: sampleMod, versions: [sampleMod], installedMods: [], availableUpdates: [], installingIdentifiers: ["ModuleManager"] },
+      props: { mod: sampleMod, versions: [sampleMod], installedMods: [], availableUpdates: [], busy: new Map([["modulemanager", "installing" as const]]) },
     });
     const install = wrapper.find('[data-testid="details-install-btn"]');
 
@@ -265,6 +265,47 @@ describe("ModDetailsPanel component", () => {
     expect(install.attributes("aria-disabled")).toBe("true");
     await install.trigger("click");
     expect(wrapper.emitted("install")).toBeUndefined();
+  });
+
+  it("blocks Uninstall and Update for a queued mod and keeps the accessible names", async () => {
+    const installedMods = [{ identifier: "ModuleManager", name: "Module Manager", version: "4.2.2", status: "managed" as const }];
+    const wrapper = mount(ModDetailsPanel, {
+      props: {
+        mod: sampleMod,
+        versions: [sampleMod, sampleModV422],
+        installedMods,
+        availableUpdates: [
+          { identifier: "ModuleManager", name: "Module Manager", installedVersion: "4.2.2", availableVersion: "4.2.3" },
+        ],
+        busy: new Map([["modulemanager", "queued" as const]]),
+      },
+    });
+    const uninstall = wrapper.find('[data-testid="details-uninstall-btn"]');
+    const update = wrapper.find('[data-testid="details-update-btn"]');
+
+    expect(uninstall.text()).toBe("Queued");
+    expect(uninstall.attributes("aria-disabled")).toBe("true");
+    expect(uninstall.attributes("aria-label")).toBe("Uninstall Module Manager");
+    expect(update.attributes("aria-disabled")).toBe("true");
+    await uninstall.trigger("click");
+    await update.trigger("click");
+    expect(wrapper.emitted("uninstall")).toBeUndefined();
+    expect(wrapper.emitted("install")).toBeUndefined();
+  });
+
+  it("shows Uninstalling… while an uninstall job runs", () => {
+    const installedMods = [{ identifier: "ModuleManager", name: "Module Manager", version: "4.2.3", status: "managed" as const }];
+    const wrapper = mount(ModDetailsPanel, {
+      props: {
+        mod: sampleMod,
+        versions: [sampleMod],
+        installedMods,
+        availableUpdates: [],
+        busy: new Map([["modulemanager", "uninstalling" as const]]),
+      },
+    });
+
+    expect(wrapper.find('[data-testid="details-uninstall-btn"]').text()).toBe("Uninstalling…");
   });
 
   it("emits close on close button click and escape key", async () => {

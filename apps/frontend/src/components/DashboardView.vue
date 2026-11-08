@@ -4,6 +4,7 @@ import type { AvailableUpdate, KspInstallation, RegistryResponse } from "@kraken
 import AppIcon from "./AppIcon.vue";
 import PathText from "./PathText.vue";
 import ViewHeader from "./ViewHeader.vue";
+import { moduleIdentifierKey, type BusyState } from "../useJobQueue.js";
 import { formatCount, formatRelativeTime } from "../format.js";
 
 const props = withDefaults(
@@ -13,10 +14,10 @@ const props = withDefaults(
     updates: AvailableUpdate[];
     registry?: RegistryResponse;
     isRefreshingRegistry: boolean;
-    installingIdentifiers?: string[];
+    busy?: Map<string, BusyState>;
     isUpdatingAll?: boolean;
   }>(),
-  { installingIdentifiers: () => [], isUpdatingAll: false },
+  { busy: () => new Map(), isUpdatingAll: false },
 );
 
 defineEmits<{
@@ -25,8 +26,17 @@ defineEmits<{
   updateAll: [];
 }>();
 
+function busyState(identifier: string): BusyState | undefined {
+  return props.busy.get(moduleIdentifierKey(identifier));
+}
+
 function isBusy(identifier: string): boolean {
-  return props.isUpdatingAll || props.installingIdentifiers.includes(identifier);
+  return props.isUpdatingAll || busyState(identifier) !== undefined;
+}
+
+function updateLabel(identifier: string): string {
+  const state = busyState(identifier);
+  return state === "queued" ? "Queued" : state === "installing" ? "Updating…" : state === "uninstalling" ? "Uninstalling…" : "Update";
 }
 
 const registryUpdated = computed(() =>
@@ -116,10 +126,10 @@ const updatesSummary = computed(() =>
               type="button"
               :data-testid="`update-btn-${update.identifier}`"
               :aria-label="`Update ${update.name} to ${update.availableVersion}`"
-              :disabled="isBusy(update.identifier)"
-              @click="$emit('update', update)"
+              :aria-disabled="isBusy(update.identifier) ? 'true' : undefined"
+              @click="!isBusy(update.identifier) && $emit('update', update)"
             >
-              {{ installingIdentifiers.includes(update.identifier) ? "Updating…" : "Update" }}
+              {{ updateLabel(update.identifier) }}
             </button>
           </li>
         </ul>

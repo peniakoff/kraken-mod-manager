@@ -13,6 +13,7 @@ import ModDetailsPanel from "./ModDetailsPanel.vue";
 import DependencyPromptDialog, { type DependencyPrompt } from "./DependencyPromptDialog.vue";
 import AppIcon from "./AppIcon.vue";
 import ViewHeader from "./ViewHeader.vue";
+import type { BusyState } from "../useJobQueue.js";
 import { formatCount, formatRelativeTime } from "../format.js";
 
 const props = defineProps<{
@@ -24,8 +25,7 @@ const props = defineProps<{
   isSearching: boolean;
   installedMods: InstalledMod[];
   availableUpdates: AvailableUpdate[];
-  installingIdentifiers: string[];
-  uninstallingIdentifier?: string;
+  busy: Map<string, BusyState>;
   dependencyPrompt?: DependencyPrompt;
   selectedTag: string;
   customTag: string;
@@ -135,7 +135,7 @@ const registryUpdated = computed(() =>
           :compatible-only="compatibleOnly"
           :installed-mods="installedMods"
           :available-updates="availableUpdates"
-          :installing-identifiers="installingIdentifiers"
+          :busy="busy"
           @install="emit('install', $event)"
           @select="emit('selectMod', $event)"
         />
@@ -164,8 +164,7 @@ const registryUpdated = computed(() =>
       :ksp-version="kspVersion"
       :installed-mods="installedMods"
       :available-updates="availableUpdates"
-      :installing-identifiers="installingIdentifiers"
-      :uninstalling-identifier="uninstallingIdentifier"
+      :busy="busy"
       :is-loading-versions="isLoadingVersions"
       @close="emit('selectMod', undefined)"
       @install="emit('install', $event)"

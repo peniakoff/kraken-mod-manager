@@ -400,7 +400,180 @@ describe("App", () => {
     await confirm().trigger("click");
     await vi.waitFor(() => expect(wrapper.text()).not.toContain("Uninstall Module Manager?"));
     expect(uninstallBodies).toHaveLength(2);
-    expect(wrapper.text()).toContain("No managed or detected mods yet.");
+    // The mod stays listed until the queued job succeeds.
+    expect(wrapper.text()).not.toContain("No managed or detected mods yet.");
+    await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    MockEventSource.instances[0]!.emit({ jobId: "job-uninstall", status: "succeeded", phase: "done" });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("No managed or detected mods yet."));
+  });
+
+  describe("queued uninstall and blocked actions", () => {
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
+    const installation = { path: "/games/KSP", platform: "linux", source: "manual", version: "1.12.5" };
+    const example = { identifier: "ExampleMod", name: "Example Mod", version: "1.0.0", status: "managed" };
+
+    function uninstallFetch(uninstallResponse: () => Response) {
+      return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/jobs") return json({ jobs: [] });
+        if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+        if (url === "/api/v1/config") return json({ configured: true, installation });
+        if (url === "/api/v1/registry") return json({ status: "missing", moduleCount: 0 });
+        if (url === "/api/v1/installed-mods") return json({ mods: [example] });
+        if (url === "/api/v1/updates") return json({ updates: [] });
+        if (url === "/api/v1/mods/ExampleMod/uninstall-plan" && init?.method === "POST") {
+          return json({
+            target: { identifier: "ExampleMod", name: "Example Mod", version: "1.0.0" },
+            dependents: [],
+            orphans: [],
+            brokenUnmanaged: [],
+            warnings: [],
+          });
+        }
+        if (url === "/api/v1/mods/ExampleMod/uninstall" && init?.method === "POST") return uninstallResponse();
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+    }
+
+    async function openUninstallDialog(wrapper: ReturnType<typeof mount>): Promise<void> {
+      await vi.waitFor(() => expect(wrapper.text()).toContain("Active installation"));
+      await wrapper.findAll("button").find((button) => button.text().startsWith("Installed"))!.trigger("click");
+      await vi.waitFor(() => expect(wrapper.find('[data-testid="installed-uninstall-btn"]').exists()).toBe(true));
+      await wrapper.find('[data-testid="installed-uninstall-btn"]').trigger("click");
+      await vi.waitFor(() => expect(wrapper.text()).toContain("Uninstall Example Mod?"));
+    }
+
+    const confirmButton = (wrapper: ReturnType<typeof mount>) =>
+      wrapper.find('[role="dialog"]').findAll("button").find((button) => button.text() === "Uninstall")!;
+
+    it("queues an uninstall and closes the dialog", async () => {
+      vi.stubGlobal(
+        "fetch",
+        uninstallFetch(() =>
+          json({ job: { jobId: "job-u", kind: "uninstall", identifier: "ExampleMod", status: "queued", phase: "queued", alsoRemove: [] } }, 202),
+        ),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await openUninstallDialog(wrapper);
+      await confirmButton(wrapper).trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find('[role="dialog"]').exists()).toBe(false));
+      expect(wrapper.find('[data-testid="install-queue"]').text()).toContain("Uninstall ExampleMod");
+      const row = wrapper.find('[data-testid="installed-uninstall-btn"]');
+      expect(row.attributes("aria-disabled")).toBe("true");
+      expect(row.text()).toBe("Queued");
+    });
+
+    it("keeps an uninstall refusal in the dialog", async () => {
+      vi.stubGlobal(
+        "fetch",
+        uninstallFetch(() => json({ code: "JOB_ALREADY_QUEUED", message: "Example Mod already has a queued or running job." }, 409)),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await openUninstallDialog(wrapper);
+      await confirmButton(wrapper).trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find('[role="dialog"]').text()).toContain("already has a queued or running job."));
+      expect(wrapper.find('[data-testid="install-queue"]').exists()).toBe(false);
+    });
+
+    it("shows a failed uninstall job's error", async () => {
+      vi.stubGlobal(
+        "fetch",
+        uninstallFetch(() =>
+          json({ job: { jobId: "job-u", kind: "uninstall", identifier: "ExampleMod", status: "queued", phase: "queued", alsoRemove: [] } }, 202),
+        ),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await openUninstallDialog(wrapper);
+      await confirmButton(wrapper).trigger("click");
+      await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      MockEventSource.instances[0]!.emit({ jobId: "job-u", status: "failed", phase: "failed", error: "Could not delete Parts/x.cfg." });
+
+      await vi.waitFor(() => expect(wrapper.get('[role="alert"]').text()).toContain("Could not delete Parts/x.cfg."));
+    });
+
+    it("clears the error bar with Dismiss", async () => {
+      vi.stubGlobal(
+        "fetch",
+        uninstallFetch(() =>
+          json({ job: { jobId: "job-u", kind: "uninstall", identifier: "ExampleMod", status: "queued", phase: "queued", alsoRemove: [] } }, 202),
+        ),
+      );
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await openUninstallDialog(wrapper);
+      await confirmButton(wrapper).trigger("click");
+      await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      MockEventSource.instances[0]!.emit({ jobId: "job-u", status: "failed", phase: "failed", error: "Boom happened." });
+      await vi.waitFor(() => expect(wrapper.get('[role="alert"]').text()).toContain("Boom happened."));
+      for (const cls of ["sticky", "top-0", "z-20"]) {
+        expect(wrapper.get('[role="alert"]').classes()).toContain(cls);
+      }
+
+      await wrapper.get('[role="alert"] button[aria-label="Dismiss error"]').trigger("click");
+      await vi.waitFor(() => expect(wrapper.find('[role="alert"]').exists()).toBe(false));
+    });
+
+    it("skips mods that already have a job in Update all", async () => {
+      const planned: string[] = [];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/v1/health") return json({ status: "ok", version: "test-version" });
+        if (url === "/api/v1/install-recovery") return json({ rolledBack: [], failed: [] });
+        if (url === "/api/v1/config") return json({ configured: true, installation });
+        if (url === "/api/v1/jobs") {
+          return json({
+            jobs: [{ jobId: "job-a", kind: "install", identifier: "Alpha", version: "1.1.0", status: "queued", phase: "queued" }],
+          });
+        }
+        if (url === "/api/v1/registry") return json({ status: "missing", moduleCount: 0 });
+        if (url === "/api/v1/installed-mods") return json({ mods: [] });
+        if (url === "/api/v1/updates") {
+          return json({
+            updates: [
+              { identifier: "Alpha", name: "Alpha", installedVersion: "1.0.0", availableVersion: "1.1.0" },
+              { identifier: "Beta", name: "Beta", installedVersion: "1.0.0", availableVersion: "2.0.0" },
+            ],
+          });
+        }
+        const versions = /^\/api\/v1\/mods\/(\w+)\/versions$/.exec(url);
+        if (versions !== null) {
+          const identifier = versions[1]!;
+          const version = identifier === "Alpha" ? "1.1.0" : "2.0.0";
+          return json({ identifier, versions: [{ identifier, name: identifier, authors: ["T"], version, tags: [], download: "https://example.test/x.zip" }] });
+        }
+        const plan = /^\/api\/v1\/mods\/(\w+)\/plan$/.exec(url);
+        if (plan !== null) {
+          planned.push(plan[1]!);
+          const ref = { identifier: plan[1]!, name: plan[1]!, version: "2.0.0" };
+          return json({ status: "ok", target: ref, toInstall: [ref], alreadySatisfied: [], conflicts: [], unmet: [], optional: [], choices: [] });
+        }
+        if (url.endsWith("/install") && init?.method === "POST") {
+          return json({ job: { jobId: "job-b", kind: "install", identifier: "Beta", status: "queued", phase: "queued" } }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("EventSource", MockEventSource);
+
+      const wrapper = mount(App);
+      await vi.waitFor(() => expect(wrapper.text()).toContain("2 updates available."));
+      await wrapper.findAll("button").find((button) => button.text() === "Update all")!.trigger("click");
+
+      await vi.waitFor(() => expect(planned).toContain("Beta"));
+      await vi.waitFor(() => expect(wrapper.find('[data-testid="update-btn-Beta"]').text()).toBe("Queued"));
+      expect(planned).not.toContain("Alpha");
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    });
   });
 
   it("updates one mod from the dashboard and reports updates that need attention", async () => {

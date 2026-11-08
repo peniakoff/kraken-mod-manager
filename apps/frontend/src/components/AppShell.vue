@@ -21,6 +21,7 @@ const props = defineProps<{
 defineEmits<{
   navigate: [view: AppView];
   removeJob: [jobId: string];
+  dismissError: [];
   clearFinishedJobs: [];
 }>();
 
@@ -137,11 +138,19 @@ const registryText = computed(() => {
       <div class="mx-auto max-w-6xl">
         <p
           v-if="errorMessage !== undefined"
-          class="panel mb-6 flex items-start gap-3 border-danger/40 px-4 py-3 text-sm text-danger"
+          class="panel sticky top-0 z-20 mb-6 flex items-start gap-3 border-danger/40 bg-panel px-4 py-3 text-sm text-danger"
           role="alert"
         >
           <AppIcon name="alert" :size="18" class="mt-0.5" />
-          <span>{{ errorMessage }}</span>
+          <span class="min-w-0 flex-1">{{ errorMessage }}</span>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm shrink-0"
+            aria-label="Dismiss error"
+            @click="$emit('dismissError')"
+          >
+            Dismiss
+          </button>
         </p>
         <slot />
       </div>

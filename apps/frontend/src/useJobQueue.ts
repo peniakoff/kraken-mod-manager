@@ -11,7 +11,7 @@ type JobQueueOptions = {
   onLoadError?: (error: unknown) => void;
 };
 
-/** Frontend mirror of `moduleIdentifierKey` from `@kraken/core`. */
+/** Frontend mirror of `moduleIdentifierKey` from `@kraken/core`; the views use it to look up `busy`. */
 export function moduleIdentifierKey(identifier: string): string {
   return identifier.trim().toLowerCase();
 }

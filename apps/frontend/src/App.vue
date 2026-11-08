@@ -42,7 +42,7 @@ import SetupView from "./components/SetupView.vue";
 import UninstallDialog from "./components/UninstallDialog.vue";
 import { canInstall } from "./installable.js";
 import { MOD_BROWSER_PAGE_SIZE } from "./modTags.js";
-import { moduleIdentifierKey, useJobQueue } from "./useJobQueue.js";
+import { moduleIdentifierKey, useJobQueue, type BusyState } from "./useJobQueue.js";
 
 /** Matches the 1 MB body limit of POST /api/v1/modpacks. */
 const MAX_MODPACK_BYTES = 1_048_576;
@@ -79,7 +79,7 @@ const recoveryReport = ref<InstallRecoveryReport>();
 const availableUpdates = ref<AvailableUpdate[]>([]);
 const pendingInstallIdentifiers = ref<string[]>([]);
 const isUpdatingAll = ref(false);
-const uninstallingIdentifier = ref<string>();
+const isSubmittingUninstall = ref(false);
 const uninstallPrompt = ref<{ mod: InstalledMod; plan: UninstallPlanResponse; error?: string }>();
 const dependencyPrompt = ref<DependencyPrompt>();
 const selectedMod = ref<CkanModule>();
@@ -88,7 +88,7 @@ const isLoadingVersions = ref(false);
 
 const {
   jobs,
-  busy,
+  busy: queueBusy,
   load: loadJobs,
   add: addInstallJob,
   remove: removeQueuedJob,
@@ -98,22 +98,24 @@ const {
     void refreshInstalledState();
   },
   onFailed: (job) => {
-    errorMessage.value = job.error ?? "Install failed.";
+    errorMessage.value = job.error ?? (job.kind === "uninstall" ? "Uninstall failed." : "Install failed.");
   },
   onLoadError: (error) => {
     reportError(error, "The job queue could not be loaded.");
   },
 });
 
-// Task 5 replaces this with per-view busy states.
-const installingIdentifiers = computed(() => [
-  ...new Set([
-    ...pendingInstallIdentifiers.value,
-    ...jobs.value
-      .filter((job) => job.kind === "install" && busy.value.has(moduleIdentifierKey(job.identifier)))
-      .map((job) => job.identifier),
-  ]),
-]);
+/** Queue states plus mods that are still being planned (shown as queued). */
+const busy = computed(() => {
+  const merged = new Map<string, BusyState>(queueBusy.value);
+  for (const identifier of pendingInstallIdentifiers.value) {
+    const key = moduleIdentifierKey(identifier);
+    if (!merged.has(key)) {
+      merged.set(key, "queued");
+    }
+  }
+  return merged;
+});
 
 async function onRemoveJob(jobId: string): Promise<void> {
   try {
@@ -555,6 +557,10 @@ async function onUpdateAll(): Promise<void> {
   const skipped: string[] = [];
   try {
     for (const update of availableUpdates.value) {
+      // A mod with a queued or running job already has its work scheduled.
+      if (busy.value.has(moduleIdentifierKey(update.identifier))) {
+        continue;
+      }
       try {
         const mod = await findUpdateModule(update);
         const plan = await planModInstall(mod.identifier, mod.version);
@@ -586,14 +592,14 @@ async function onUninstall(mod: InstalledMod): Promise<void> {
   if (mod.status !== "managed") {
     return;
   }
-  uninstallingIdentifier.value = mod.identifier;
+  if (busy.value.has(moduleIdentifierKey(mod.identifier))) {
+    return;
+  }
   errorMessage.value = undefined;
   try {
     uninstallPrompt.value = { mod, plan: await planUninstall(mod.identifier) };
   } catch (error) {
     reportError(error, "Uninstall could not be planned.");
-  } finally {
-    uninstallingIdentifier.value = undefined;
   }
 }
 
@@ -602,16 +608,14 @@ async function confirmUninstall(alsoRemove: string[]): Promise<void> {
   if (prompt === undefined) {
     return;
   }
-  uninstallingIdentifier.value = prompt.mod.identifier;
+  isSubmittingUninstall.value = true;
   try {
-    await uninstallMod(prompt.mod.identifier, alsoRemove);
+    const accepted = await uninstallMod(prompt.mod.identifier, alsoRemove);
+    addInstallJob(accepted.job);
     uninstallPrompt.value = undefined;
-    await loadInstalledMods();
-    await loadUpdates();
   } catch (error) {
-    // Keep the dialog open with the reason. The server state moved (a
-    // rejected selection) or some mods were already removed (a partial
-    // failure), so refresh the inventory and the plan the user confirms.
+    // Keep the dialog open with the reason. A rejected selection means the
+    // server state moved, so refresh the inventory and the plan the user confirms.
     const message = error instanceof Error ? error.message : "Uninstall failed.";
     uninstallPrompt.value = { ...prompt, error: message };
     await refreshInstalledState();
@@ -625,7 +629,7 @@ async function confirmUninstall(alsoRemove: string[]): Promise<void> {
       uninstallPrompt.value = { ...prompt, error: `${message} ${planMessage}` };
     }
   } finally {
-    uninstallingIdentifier.value = undefined;
+    isSubmittingUninstall.value = false;
   }
 }
 
@@ -679,6 +683,7 @@ onMounted(loadSetup);
     :registry="registry"
     @navigate="activeView = $event"
     @remove-job="onRemoveJob"
+    @dismiss-error="errorMessage = undefined"
     @clear-finished-jobs="onClearFinishedJobs"
   >
     <RecoveryNotice v-if="recoveryReport !== undefined" :report="recoveryReport" @dismiss="recoveryReport = undefined" />
@@ -689,7 +694,7 @@ onMounted(loadSetup);
       :updates="availableUpdates"
       :registry="registry"
       :is-refreshing-registry="isRefreshingRegistry"
-      :installing-identifiers="installingIdentifiers"
+      :busy="busy"
       :is-updating-all="isUpdatingAll"
       @refresh-registry="onRefreshRegistry"
       @update="onUpdate"
@@ -699,8 +704,7 @@ onMounted(loadSetup);
       v-else-if="activeView === 'installed'"
       :installed-mods="installedMods"
       :available-updates="availableUpdates"
-      :installing-identifiers="installingIdentifiers"
-      :uninstalling-identifier="uninstallingIdentifier"
+      :busy="busy"
       @uninstall="onUninstall"
       @update="onUpdate"
       @import-modpack="onImportModpack"
@@ -718,8 +722,7 @@ onMounted(loadSetup);
       :is-searching="isSearching"
       :installed-mods="installedMods"
       :available-updates="availableUpdates"
-      :installing-identifiers="installingIdentifiers"
-      :uninstalling-identifier="uninstallingIdentifier"
+      :busy="busy"
       :dependency-prompt="dependencyPrompt"
       :ksp-version="installation.version"
       :page-size="pageSize"
@@ -742,7 +745,7 @@ onMounted(loadSetup);
       v-if="uninstallPrompt !== undefined"
       :plan="uninstallPrompt.plan"
       :error="uninstallPrompt.error"
-      :busy="uninstallingIdentifier === uninstallPrompt.mod.identifier"
+      :busy="isSubmittingUninstall"
       @confirm="confirmUninstall"
       @cancel="cancelUninstall"
     />
