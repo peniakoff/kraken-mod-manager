@@ -364,9 +364,13 @@ export const jobPhaseSchema = z.enum(["queued", "downloading", "verifying", "ext
 
 export type JobPhase = z.infer<typeof jobPhaseSchema>;
 
+export const jobKindSchema = z.enum(["install", "uninstall"]);
+
+export type JobKind = z.infer<typeof jobKindSchema>;
+
 export const jobResponseSchema = z.object({
   jobId: z.string().min(1),
-  kind: z.literal("install"),
+  kind: jobKindSchema,
   identifier: z.string().min(1),
   version: z.string().min(1).optional(),
   status: jobStatusSchema,
@@ -375,6 +379,8 @@ export const jobResponseSchema = z.object({
   bytesReceived: z.number().int().nonnegative().optional(),
   bytesTotal: z.number().int().nonnegative().optional(),
   error: z.string().optional(),
+  alsoRemove: z.array(z.string().min(1)).optional(),
+  removed: z.array(z.string().min(1)).optional(),
 });
 
 export type JobResponse = z.infer<typeof jobResponseSchema>;
@@ -384,6 +390,18 @@ export const installAcceptedResponseSchema = z.object({
 });
 
 export type InstallAcceptedResponse = z.infer<typeof installAcceptedResponseSchema>;
+
+export const uninstallAcceptedResponseSchema = z.object({
+  job: jobResponseSchema,
+});
+
+export type UninstallAcceptedResponse = z.infer<typeof uninstallAcceptedResponseSchema>;
+
+export const jobsListResponseSchema = z.object({
+  jobs: z.array(jobResponseSchema),
+});
+
+export type JobsListResponse = z.infer<typeof jobsListResponseSchema>;
 
 export const jobProgressEventSchema = z.object({
   jobId: z.string().min(1),

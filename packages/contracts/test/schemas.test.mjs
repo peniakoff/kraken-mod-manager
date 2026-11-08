@@ -10,6 +10,8 @@ import {
   installedModsResponseSchema,
   jobProgressEventSchema,
   jobResponseSchema,
+  jobsListResponseSchema,
+  uninstallAcceptedResponseSchema,
   ckanModuleSchema,
   modDetailsResponseSchema,
   modVersionsResponseSchema,
@@ -244,4 +246,21 @@ test("accepts a known module source and rejects an unknown one", () => {
 
   assert.equal(ckanModuleSchema.parse({ ...mod, source: "imported" }).source, "imported");
   assert.equal(ckanModuleSchema.safeParse({ ...mod, source: "other" }).success, false);
+});
+
+test("accepts an uninstall job with alsoRemove and removed and rejects an unknown kind", () => {
+  const job = {
+    jobId: "j1",
+    kind: "uninstall",
+    identifier: "A",
+    status: "succeeded",
+    phase: "done",
+    alsoRemove: ["B"],
+    removed: ["A", "B"],
+  };
+
+  assert.deepEqual(jobResponseSchema.parse(job), job);
+  assert.equal(jobResponseSchema.safeParse({ ...job, kind: "other" }).success, false);
+  assert.equal(jobsListResponseSchema.parse({ jobs: [job] }).jobs.length, 1);
+  assert.equal(uninstallAcceptedResponseSchema.parse({ job }).job.kind, "uninstall");
 });

@@ -143,7 +143,7 @@ export class InstallService {
       optional,
     );
 
-    const job = this.jobStore.create(identifier, version);
+    const job = this.jobStore.create("install", identifier, version === undefined ? {} : { version });
     // The user chose the target and each optional mod by name, so none of them
     // is offered for orphan cleanup later.
     const manualIdentifiers = new Set([target.identifier, ...optional]);
