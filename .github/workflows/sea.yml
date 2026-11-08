@@ -15,16 +15,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Linux only: macOS and Windows runners cost several times more
+      # minutes. Build those platforms locally with `pnpm package:sea`.
       matrix:
         include:
           - os: ubuntu-latest
             binary: kraken-mod-manager-linux-x64
-          - os: windows-latest
-            binary: kraken-mod-manager-win-x64.exe
-          - os: macos-latest
-            binary: kraken-mod-manager-macos-arm64
-          - os: macos-15-intel
-            binary: kraken-mod-manager-macos-x64
     env:
       SEA_BINARY: apps/backend/dist/${{ matrix.binary }}
     steps:

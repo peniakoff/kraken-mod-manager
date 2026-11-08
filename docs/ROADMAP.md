@@ -108,7 +108,7 @@
         *   Windows (`kraken-mod-manager-win-x64.exe`)
         *   Linux (`kraken-mod-manager-linux-x64`)
         *   macOS (`kraken-mod-manager-macos-x64 / arm64`)
-    *   [x] CI builds and smoke-tests all four binaries on native runners and uploads them as workflow artifacts.
+    *   [x] CI builds and smoke-tests the Linux binary and uploads it as a workflow artifact. Windows and macOS binaries are built locally with `pnpm package:sea`, to save runner minutes.
     *   [ ] Code signing (Apple Developer ID with notarization, Windows Authenticode); binaries are unsigned until then.
 - [ ] **7.3. Cross-Platform Testing:**
     *   Verify the executables run correctly on fresh VMs without Node.js installed.
@@ -117,6 +117,6 @@
 
 ## Phase 8: Release & Maintenance (v1.0.0)
 - [x] **Dependabot:** Weekly npm and GitHub Actions updates via `.github/dependabot.yml`.
-- [x] Set up binary-delivery CD: a `vX.Y.Z` tag builds all SEA binaries and creates a draft GitHub Release with checksums and changelog notes.
+- [x] Set up binary-delivery CD: a `vX.Y.Z` tag builds the Linux SEA binary and creates a draft GitHub Release with checksums and changelog notes.
 - [x] Create Issue / Pull Request templates for the community.
 - [ ] Publish the first official Release (v1.0.0) on GitHub.
