@@ -490,7 +490,6 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
     }
   });
 
-  // Registered before the :jobId routes so "clear-finished" is not read as an id.
   app.post("/api/v1/jobs/clear-finished", (_request, response, next) => {
     try {
       dependencies.installService.clearFinishedJobs();

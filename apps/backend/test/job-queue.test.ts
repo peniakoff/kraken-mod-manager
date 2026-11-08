@@ -46,6 +46,24 @@ describe("JobQueue", () => {
     error.mockRestore();
   });
 
+  it("reports a rejected run through the error handler and still starts the next job", async () => {
+    const queue = new JobQueue();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const reported: Array<[string, unknown]> = [];
+    queue.setRunErrorHandler((jobId, cause) => reported.push([jobId, cause]));
+    const boom = new Error("boom");
+    const ran: string[] = [];
+    queue.enqueue("a", () => Promise.reject(boom));
+    queue.enqueue("b", async () => {
+      ran.push("b");
+    });
+    await queue.idle();
+    expect(reported).toEqual([["a", boom]]);
+    expect(ran).toEqual(["b"]);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it("cancels a waiting job but not a running one", async () => {
     const queue = new JobQueue();
     const gate = deferred();

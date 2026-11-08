@@ -79,7 +79,14 @@ export class InstallService {
     private readonly jobStore: JobStore,
     private readonly jobQueue: JobQueue,
     private readonly downloadCacheDirectory: string,
-  ) {}
+  ) {
+    // A run() that rejects outside its own handling would leave the job
+    // "running" forever, blocking the mod and the DELETE route.
+    this.jobQueue.setRunErrorHandler((jobId, error) => {
+      const message = error instanceof Error ? error.message : "The job failed unexpectedly.";
+      this.jobStore.update(jobId, { status: "failed", phase: "failed", error: message, message });
+    });
+  }
 
   async listInstalled(kspPath: string): Promise<InstalledModSummary[]> {
     await this.registryService.ensureLoaded();
@@ -1261,7 +1268,6 @@ function hasInstallSource(module: CkanModule): boolean {
   return isInstallable(module) && (module.kind === "metapackage" || (module.download?.length ?? 0) > 0);
 }
 
-/** Hidden folder in the KSP root; KSP only loads GameData, so it is ignored. */
 interface ResolveArguments {
   withDependencies: boolean;
   choices: Readonly<Record<string, string>> | undefined;
@@ -1272,6 +1278,7 @@ function planKey(module: CkanModule): string {
   return `${moduleIdentifierKey(module.identifier)}@${module.version}`;
 }
 
+/** Hidden folder in the KSP root; KSP only loads GameData, so it is ignored. */
 const BACKUP_DIRECTORY = ".kraken-backup";
 
 /** Names this service gives downloads, including those of older versions. */

@@ -8,6 +8,12 @@ export class JobQueue {
   private readonly waiting: QueuedJob[] = [];
   private runningJobId: string | undefined;
   private idleWaiters: Array<() => void> = [];
+  private runErrorHandler: ((jobId: string, error: unknown) => void) | undefined;
+
+  /** Called when a job's run() rejects, so the owner can record the failure. */
+  setRunErrorHandler(handler: (jobId: string, error: unknown) => void): void {
+    this.runErrorHandler = handler;
+  }
 
   enqueue(jobId: string, run: () => Promise<void>): void {
     this.waiting.push({ jobId, run });
@@ -62,6 +68,11 @@ export class JobQueue {
       await entry.run();
     } catch (error) {
       console.error(`Job ${entry.jobId} failed unexpectedly.`, error);
+      try {
+        this.runErrorHandler?.(entry.jobId, error);
+      } catch (handlerError) {
+        console.error(`Recording the failure of job ${entry.jobId} failed.`, handlerError);
+      }
     } finally {
       this.runningJobId = undefined;
       this.pump();
