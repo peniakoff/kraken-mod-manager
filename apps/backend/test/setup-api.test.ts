@@ -9,6 +9,7 @@ import { ZipArchive } from "../src/adapters/zip-archive.js";
 import { createApp } from "../src/app.js";
 import { DirectoryBrowser } from "../src/directory-browser.js";
 import { InstallService } from "../src/install-service.js";
+import { JobQueue } from "../src/job-queue.js";
 import { JobStore } from "../src/job-store.js";
 import { RegistryService } from "../src/registry-service.js";
 import type { PlatformPort } from "@kraken/core";
@@ -49,6 +50,7 @@ async function createTestApp() {
       new ZipArchive(),
       new InstallManifestStore(join(home, "data", "install-manifest.json")),
       new JobStore(),
+      new JobQueue(),
       join(home, "cache", "downloads"),
     ),
   });

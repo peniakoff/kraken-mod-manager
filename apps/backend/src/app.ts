@@ -54,6 +54,7 @@ import {
   ZipArchiveError,
   InstallPolicyError,
 } from "./install-service.js";
+import { JobQueue } from "./job-queue.js";
 import { JobStore } from "./job-store.js";
 import {
   getFrontendContentType,
@@ -108,6 +109,7 @@ export function createDefaultDependencies(frontendDirectory = process.env.KMM_FR
       new ZipArchive(),
       new InstallManifestStore(getInstallManifestFilePath(platform)),
       new JobStore(),
+      new JobQueue(),
       getDownloadCacheDirectory(platform),
     ),
   };
@@ -633,7 +635,7 @@ export function createApp(version = "0.0.0", dependencies = createDefaultDepende
         error.code === "NOT_CONFIGURED" ||
         error.code === "PLAN_NOT_READY" ||
         error.code === "UNINSTALL_PLAN_MISMATCH" ||
-        error.code === "INSTALL_IN_PROGRESS"
+        error.code === "JOB_ALREADY_QUEUED"
           ? 409
           : error.code === "MOD_NOT_FOUND" || error.code === "JOB_NOT_FOUND"
             ? 404
