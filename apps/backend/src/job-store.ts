@@ -15,7 +15,11 @@ export const MAX_FINISHED_JOBS = 50;
 export class JobStore {
   private readonly jobs = new Map<string, InstallJob>();
 
-  create(kind: JobKind, identifier: string, options: { version?: string; alsoRemove?: string[] } = {}): InstallJob {
+  create(
+    kind: JobKind,
+    identifier: string,
+    options: { version?: string; name?: string; alsoRemove?: string[] } = {},
+  ): InstallJob {
     this.pruneFinishedJobs();
     const jobId = globalThis.crypto.randomUUID();
     const job: InstallJob = {
@@ -27,6 +31,9 @@ export class JobStore {
       listeners: new Set(),
       hidden: false,
     };
+    if (options.name !== undefined) {
+      job.name = options.name;
+    }
     if (options.version !== undefined) {
       job.version = options.version;
     }
@@ -141,6 +148,9 @@ export class JobStore {
       status: job.status,
       phase: job.phase,
     };
+    if (job.name !== undefined) {
+      response.name = job.name;
+    }
     if (job.version !== undefined) {
       response.version = job.version;
     }

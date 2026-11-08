@@ -43,6 +43,7 @@ const jobs: JobResponse[] = [
     jobId: "job-queued",
     kind: "install",
     identifier: "Example",
+    name: "Example Mod",
     version: "1.0",
     status: "queued",
     phase: "queued",
@@ -51,6 +52,7 @@ const jobs: JobResponse[] = [
     jobId: "job-uninstall",
     kind: "uninstall",
     identifier: "Kopernicus",
+    name: "Kopernicus Continued",
     status: "running",
     phase: "installing",
     alsoRemove: ["A", "B"],
@@ -80,9 +82,11 @@ describe("InstallQueuePanel", () => {
     const wrapper = mount(InstallQueuePanel, { props: { jobs } });
 
     expect(wrapper.attributes("aria-label")).toBe("Queue");
-    expect(wrapper.find('[data-job-id="job-queued"]').text()).toContain("Install Example 1.0");
+    expect(wrapper.find('[data-job-id="job-queued"]').text()).toContain("Install Example Mod 1.0");
     expect(wrapper.find('[data-job-id="job-queued"]').text()).toContain("Queued");
-    expect(wrapper.find('[data-job-id="job-uninstall"]').text()).toContain("Uninstall Kopernicus (+2 more)");
+    expect(wrapper.find('[data-job-id="job-uninstall"]').text()).toContain("Uninstall Kopernicus Continued (+2 more)");
+    // Jobs without a name fall back to the identifier.
+    expect(wrapper.find('[data-job-id="job-active"]').text()).toContain("Install ModuleManager 4.2.3");
   });
 
   it("offers Remove only on queued entries and emits remove", async () => {
@@ -92,7 +96,7 @@ describe("InstallQueuePanel", () => {
     expect(wrapper.find('[data-job-id="job-uninstall"] button').exists()).toBe(false);
     const remove = wrapper.find('[data-job-id="job-queued"] button');
     expect(remove.text()).toBe("Remove");
-    expect(remove.attributes("aria-label")).toBe("Remove Install Example 1.0 from the queue");
+    expect(remove.attributes("aria-label")).toBe("Remove Install Example Mod 1.0 from the queue");
     await remove.trigger("click");
     expect(wrapper.emitted("remove")).toEqual([["job-queued"]]);
   });

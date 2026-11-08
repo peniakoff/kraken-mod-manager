@@ -251,6 +251,7 @@ test("accepts an uninstall job with alsoRemove and removed and rejects an unknow
     jobId: "j1",
     kind: "uninstall",
     identifier: "A",
+    name: "Mod A",
     status: "succeeded",
     phase: "done",
     alsoRemove: ["B"],

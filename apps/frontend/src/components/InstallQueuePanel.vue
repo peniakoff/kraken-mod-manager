@@ -15,11 +15,12 @@ const emit = defineEmits<{
 const hasFinished = computed(() => props.jobs.some((job) => isTerminal(job)));
 
 function jobLabel(job: JobResponse): string {
+  const name = job.name ?? job.identifier;
   if (job.kind === "uninstall") {
     const more = job.alsoRemove?.length ?? 0;
-    return `Uninstall ${job.identifier}${more > 0 ? ` (+${more} more)` : ""}`;
+    return `Uninstall ${name}${more > 0 ? ` (+${more} more)` : ""}`;
   }
-  return `Install ${job.identifier}${job.version === undefined ? "" : ` ${job.version}`}`;
+  return `Install ${name}${job.version === undefined ? "" : ` ${job.version}`}`;
 }
 
 function isTerminal(job: JobResponse): boolean {

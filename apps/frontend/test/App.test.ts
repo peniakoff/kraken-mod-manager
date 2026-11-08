@@ -451,7 +451,7 @@ describe("App", () => {
       vi.stubGlobal(
         "fetch",
         uninstallFetch(() =>
-          json({ job: { jobId: "job-u", kind: "uninstall", identifier: "ExampleMod", status: "queued", phase: "queued", alsoRemove: [] } }, 202),
+          json({ job: { jobId: "job-u", kind: "uninstall", identifier: "ExampleMod", name: "Example Mod", status: "queued", phase: "queued", alsoRemove: [] } }, 202),
         ),
       );
       vi.stubGlobal("EventSource", MockEventSource);
@@ -461,7 +461,7 @@ describe("App", () => {
       await confirmButton(wrapper).trigger("click");
 
       await vi.waitFor(() => expect(wrapper.find('[role="dialog"]').exists()).toBe(false));
-      expect(wrapper.find('[data-testid="install-queue"]').text()).toContain("Uninstall ExampleMod");
+      expect(wrapper.find('[data-testid="install-queue"]').text()).toContain("Uninstall Example Mod");
       const row = wrapper.find('[data-testid="installed-uninstall-btn"]');
       expect(row.attributes("aria-disabled")).toBe("true");
       expect(row.text()).toBe("Queued");

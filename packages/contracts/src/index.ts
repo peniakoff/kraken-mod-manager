@@ -366,6 +366,8 @@ export const jobResponseSchema = z.object({
   jobId: z.string().min(1),
   kind: jobKindSchema,
   identifier: z.string().min(1),
+  /** Display name of the mod, so the queue can label jobs after a reload. */
+  name: z.string().min(1).optional(),
   version: z.string().min(1).optional(),
   status: jobStatusSchema,
   phase: jobPhaseSchema,

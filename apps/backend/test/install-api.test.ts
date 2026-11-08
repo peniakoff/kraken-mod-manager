@@ -2103,6 +2103,8 @@ describe("job queue", () => {
     const running = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
     const queued = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
     expect(queued.status).toBe(202);
+    expect(running.body.job.name).toBe("Example Mod");
+    expect(queued.body.job.name).toBe("Module Manager");
     const duplicate = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
     expect(duplicate.status).toBe(409);
     expect(duplicate.body.code).toBe("JOB_ALREADY_QUEUED");
@@ -2124,7 +2126,12 @@ describe("job queue", () => {
 
     const uninstall = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({});
     expect(uninstall.status).toBe(202);
-    expect(uninstall.body.job).toMatchObject({ kind: "uninstall", identifier: "ModuleManager", status: "queued" });
+    expect(uninstall.body.job).toMatchObject({
+      kind: "uninstall",
+      identifier: "ModuleManager",
+      name: "Module Manager",
+      status: "queued",
+    });
     expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(true);
 
     gate.release();

@@ -146,7 +146,10 @@ export class InstallService {
     // Resolving awaits, so a concurrent request may have queued this mod meanwhile.
     // Check again with no await before the create so the two cannot interleave.
     this.assertNoActiveJob([target.identifier]);
-    const job = this.jobStore.create("install", identifier, version === undefined ? {} : { version });
+    const job = this.jobStore.create("install", identifier, {
+      name: target.name,
+      ...(version === undefined ? {} : { version }),
+    });
     // The user chose the target and each optional mod by name, so none of them
     // is offered for orphan cleanup later.
     const manualIdentifiers = new Set([target.identifier, ...optional]);
@@ -188,7 +191,10 @@ export class InstallService {
     // Validation awaits, so a concurrent request may have queued the same mods meanwhile.
     // Check again with no await before the create so the two cannot interleave.
     this.assertNoActiveJob([identifier, ...alsoRemove]);
-    const job = this.jobStore.create("uninstall", identifier, { alsoRemove: [...alsoRemove] });
+    const job = this.jobStore.create("uninstall", identifier, {
+      name: this.displayName(identifier),
+      alsoRemove: [...alsoRemove],
+    });
     this.jobQueue.enqueue(job.jobId, () => this.runUninstall(job.jobId, kspPath, identifier, alsoRemove));
     return this.jobStore.toResponse(job);
   }
