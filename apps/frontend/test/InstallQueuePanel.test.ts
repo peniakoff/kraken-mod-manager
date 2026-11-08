@@ -101,6 +101,21 @@ describe("InstallQueuePanel", () => {
     expect(wrapper.emitted("remove")).toEqual([["job-queued"]]);
   });
 
+  it("shows a waiting note and no progress bar for queued entries", () => {
+    const wrapper = mount(InstallQueuePanel, { props: { jobs } });
+
+    const queued = wrapper.find('[data-job-id="job-queued"]');
+    expect(queued.text()).toContain("Waiting for earlier jobs to finish.");
+    expect(queued.text().match(/Queued/g)).toHaveLength(1);
+    expect(queued.find("progress").exists()).toBe(false);
+    expect(wrapper.find('[data-job-id="job-active"] progress').attributes("aria-label")).toBe(
+      "Install progress for ModuleManager",
+    );
+    expect(wrapper.find('[data-job-id="job-uninstall"] progress').attributes("aria-label")).toBe(
+      "Uninstall progress for Kopernicus Continued",
+    );
+  });
+
   it("only emits dismissal controls for terminal jobs and can clear finished jobs", async () => {
     const wrapper = mount(InstallQueuePanel, { props: { jobs } });
 

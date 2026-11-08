@@ -52,6 +52,17 @@ function progressText(job: JobResponse): string | undefined {
   return job.bytesTotal === undefined ? received : `${received} / ${formatBytes(job.bytesTotal)}`;
 }
 
+function detailText(job: JobResponse): string {
+  if (job.error !== undefined) {
+    return job.error;
+  }
+  // A waiting job's own message ("Install queued.") only repeats its status.
+  if (job.status === "queued") {
+    return "Waiting for earlier jobs to finish.";
+  }
+  return job.message ?? statusLabel(job);
+}
+
 function statusLabel(job: JobResponse): string {
   if (job.status === "succeeded") {
     return job.kind === "uninstall" ? "Removed" : "Installed";
@@ -107,14 +118,14 @@ function statusLabel(job: JobResponse): string {
                 </p>
               </div>
               <p class="mt-1 text-sm" :class="job.status === 'failed' ? 'text-danger' : 'text-muted'">
-                {{ job.error ?? job.message ?? statusLabel(job) }}
+                {{ detailText(job) }}
               </p>
-              <div v-if="!isTerminal(job)" class="mt-2 flex items-center gap-3">
+              <div v-if="job.status === 'running'" class="mt-2 flex items-center gap-3">
                 <progress
                   class="h-1.5 min-w-0 flex-1 accent-accent"
                   :value="percentage(job)"
                   :max="percentage(job) === undefined ? undefined : 100"
-                  :aria-label="`${job.kind === 'uninstall' ? 'Uninstall' : 'Install'} progress for ${job.identifier}`"
+                  :aria-label="`${job.kind === 'uninstall' ? 'Uninstall' : 'Install'} progress for ${job.name ?? job.identifier}`"
                 />
                 <span v-if="percentage(job) !== undefined" class="readout text-[13px]">{{ percentage(job) }}%</span>
                 <span v-else-if="progressText(job) !== undefined" class="readout text-[13px] text-muted">
