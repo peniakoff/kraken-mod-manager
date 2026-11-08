@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CI and release builds now produce only the Linux binary; Windows and macOS binaries are no longer built on GitHub or attached to releases. Build them locally with `pnpm package:sea`.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added
