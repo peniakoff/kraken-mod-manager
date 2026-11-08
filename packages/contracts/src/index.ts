@@ -352,12 +352,6 @@ export const uninstallRequestSchema = z.object({
 
 export type UninstallRequest = z.infer<typeof uninstallRequestSchema>;
 
-export const uninstallResponseSchema = z.object({
-  removed: z.array(z.string().min(1)),
-});
-
-export type UninstallResponse = z.infer<typeof uninstallResponseSchema>;
-
 export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
 
 export const jobPhaseSchema = z.enum(["queued", "downloading", "verifying", "extracting", "installing", "done", "failed"]);

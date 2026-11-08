@@ -516,6 +516,17 @@ async function waitForJob(app: ReturnType<typeof createApp>, jobId: string) {
   throw new Error("job did not finish");
 }
 
+async function uninstallAndWait(
+  app: ReturnType<typeof createApp>,
+  identifier: string,
+  alsoRemove: string[] = [],
+) {
+  const accepted = await request(app).post(`/api/v1/mods/${identifier}/uninstall`).send({ alsoRemove });
+  expect(accepted.status).toBe(202);
+  expect(accepted.body.job.kind).toBe("uninstall");
+  return waitForJob(app, accepted.body.job.jobId);
+}
+
 async function installWithDependencies(app: ReturnType<typeof createApp>, identifier: string): Promise<void> {
   const accepted = await request(app).post(`/api/v1/mods/${identifier}/install`).send({ installDependencies: true });
   expect(accepted.status).toBe(202);
@@ -572,9 +583,10 @@ describe("mod install API", () => {
       ]),
     );
 
-    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
-    expect(removed.status).toBe(200);
-    expect(removed.body).toEqual({ removed: ["ExampleMod"] });
+    const removed = await uninstallAndWait(app, "ExampleMod");
+    expect(removed.status).toBe("succeeded");
+    expect(removed.phase).toBe("done");
+    expect(removed.removed).toEqual(["ExampleMod"]);
     expect(() => readFileSync(join(ksp, "GameData", "ExampleMod", "readme.txt"))).toThrow();
 
     const inventoryAfter = await request(app).get("/api/v1/installed-mods");
@@ -634,8 +646,7 @@ describe("mod install API", () => {
     expect(wrongUninstall.body.code).toBe("NOT_MANAGED");
 
     await request(app).put("/api/v1/config").send({ installationPath: ksp });
-    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
-    expect(removed.status).toBe(200);
+    expect((await uninstallAndWait(app, "ExampleMod")).status).toBe("succeeded");
   });
 
   it("keeps only files that remain after a partial uninstall", async () => {
@@ -653,9 +664,10 @@ describe("mod install API", () => {
     manifest.mods[0]!.files.push("GameData/blocked");
     writeFileSync(manifestPath, JSON.stringify(manifest));
 
-    const removed = await request(app).post("/api/v1/mods/ExampleMod/uninstall").send({});
-    expect(removed.status).toBe(500);
-    expect(removed.body.code).toBe("UNINSTALL_FAILED");
+    const removed = await uninstallAndWait(app, "ExampleMod");
+    expect(removed.status).toBe("failed");
+    expect(removed.phase).toBe("failed");
+    expect(removed.error).toEqual(expect.any(String));
     const updated = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       mods: Array<{ identifier: string; files: string[] }>;
     };
@@ -1076,11 +1088,9 @@ describe("mod install API", () => {
     expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
     expect(readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"), "utf8")).toContain("ExampleMod");
 
-    const removed = await request(app)
-      .post("/api/v1/mods/ModuleManager/uninstall")
-      .send({ alsoRemove: ["DependentMod"] });
-    expect(removed.status).toBe(200);
-    expect(removed.body).toEqual({ removed: ["DependentMod", "ModuleManager"] });
+    const removed = await uninstallAndWait(app, "ModuleManager", ["DependentMod"]);
+    expect(removed.status).toBe("succeeded");
+    expect(removed.removed).toEqual(["DependentMod", "ModuleManager"]);
     expect(() => readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
     expect(() => readFileSync(join(ksp, "GameData", "DependentMod", "readme.txt"))).toThrow();
     expect(readManifestFile(home).mods).toEqual([]);
@@ -1089,9 +1099,9 @@ describe("mod install API", () => {
   it("removes selected orphans and keeps deselected ones", async () => {
     const kept = await createInstallTestApp();
     await installWithDependencies(kept.app, "DependentMod");
-    const keepOrphan = await request(kept.app).post("/api/v1/mods/DependentMod/uninstall").send({ alsoRemove: [] });
-    expect(keepOrphan.status).toBe(200);
-    expect(keepOrphan.body).toEqual({ removed: ["DependentMod"] });
+    const keepOrphan = await uninstallAndWait(kept.app, "DependentMod");
+    expect(keepOrphan.status).toBe("succeeded");
+    expect(keepOrphan.removed).toEqual(["DependentMod"]);
     expect(readFileSync(join(kept.ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain(
       "ModuleManager",
     );
@@ -1099,11 +1109,9 @@ describe("mod install API", () => {
 
     const cleaned = await createInstallTestApp();
     await installWithDependencies(cleaned.app, "DependentMod");
-    const removeOrphan = await request(cleaned.app)
-      .post("/api/v1/mods/DependentMod/uninstall")
-      .send({ alsoRemove: ["ModuleManager"] });
-    expect(removeOrphan.status).toBe(200);
-    expect(removeOrphan.body).toEqual({ removed: ["DependentMod", "ModuleManager"] });
+    const removeOrphan = await uninstallAndWait(cleaned.app, "DependentMod", ["ModuleManager"]);
+    expect(removeOrphan.status).toBe("succeeded");
+    expect(removeOrphan.removed).toEqual(["DependentMod", "ModuleManager"]);
     expect(() => readFileSync(join(cleaned.ksp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
     expect(readManifestFile(cleaned.home).mods).toEqual([]);
   });
@@ -1125,9 +1133,9 @@ describe("mod install API", () => {
     expect(plan.body.dependents).toEqual([]);
     expect(plan.body.orphans).toEqual([]);
 
-    const removed = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({});
-    expect(removed.status).toBe(200);
-    expect(removed.body).toEqual({ removed: ["ModuleManager"] });
+    const removed = await uninstallAndWait(app, "ModuleManager");
+    expect(removed.status).toBe("succeeded");
+    expect(removed.removed).toEqual(["ModuleManager"]);
     expect(() => readFileSync(join(secondKsp, "GameData", "ModuleManager", "readme.txt"))).toThrow();
     expect(readFileSync(join(ksp, "GameData", "ModuleManager", "readme.txt"), "utf8")).toContain("ModuleManager");
     expect(readManifestFile(home).mods.map((mod) => mod.identifier).sort()).toEqual(["DependentMod", "ModuleManager"]);
@@ -2020,7 +2028,7 @@ describe("job queue", () => {
 
   it("fails a queued install whose plan needs a module that was removed meanwhile", async () => {
     const gate = deferred();
-    const { app, ksp } = await createInstallTestApp({
+    const { app, home, ksp } = await createInstallTestApp({
       holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
     });
     const moduleManager = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
@@ -2031,8 +2039,14 @@ describe("job queue", () => {
     const dependent = await request(app).post("/api/v1/mods/DependentMod/install").send({ installDependencies: true });
     expect(dependent.status).toBe(202);
 
-    const removed = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({});
-    expect(removed.status).toBe(200);
+    // Uninstalls queue behind the dependent install, so drop the record directly
+    // to simulate ModuleManager disappearing while the install waits.
+    const manifestPath = join(home, "data", "install-manifest.json");
+    const manifest = readManifestFile(home);
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({ ...manifest, mods: manifest.mods.filter((mod) => mod.identifier !== "ModuleManager") }),
+    );
 
     gate.release();
     expect((await waitForJob(app, holder.body.job.jobId)).status).toBe("succeeded");
@@ -2095,6 +2109,142 @@ describe("job queue", () => {
 
     gate.release();
     expect((await waitForJob(app, running.body.job.jobId)).status).toBe("succeeded");
+    expect((await waitForJob(app, queued.body.job.jobId)).status).toBe("succeeded");
+  });
+
+  it("queues an uninstall while an install runs and runs it after", async () => {
+    const gate = deferred();
+    const { app, ksp } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
+    });
+    const moduleManager = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect((await waitForJob(app, moduleManager.body.job.jobId)).status).toBe("succeeded");
+    const holder = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await vi.waitFor(async () => expect((await jobStatus(app, holder.body.job.jobId)).status).toBe("running"));
+
+    const uninstall = await request(app).post("/api/v1/mods/ModuleManager/uninstall").send({});
+    expect(uninstall.status).toBe(202);
+    expect(uninstall.body.job).toMatchObject({ kind: "uninstall", identifier: "ModuleManager", status: "queued" });
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(true);
+
+    gate.release();
+    expect((await waitForJob(app, holder.body.job.jobId)).status).toBe("succeeded");
+    const finished = await waitForJob(app, uninstall.body.job.jobId);
+    expect(finished.status).toBe("succeeded");
+    expect(finished.removed).toEqual(["ModuleManager"]);
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
+  });
+
+  it("fails a queued uninstall whose selection no longer matches", async () => {
+    const gate = deferred();
+    const { app, ksp } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/AnotherMod.zip", until: gate.until },
+    });
+    await installWithDependencies(app, "DependentMod");
+    // ExamplePack needs ModuleManager and is held on its AnotherMod download.
+    const pack = await request(app).post("/api/v1/mods/ExamplePack/install").send({ installDependencies: true });
+    expect(pack.status).toBe(202);
+    await vi.waitFor(async () => expect((await jobStatus(app, pack.body.job.jobId)).status).toBe("running"));
+
+    const uninstall = await request(app)
+      .post("/api/v1/mods/DependentMod/uninstall")
+      .send({ alsoRemove: ["ModuleManager"] });
+    expect(uninstall.status).toBe(202);
+
+    gate.release();
+    expect((await waitForJob(app, pack.body.job.jobId)).status).toBe("succeeded");
+    const finished = await waitForJob(app, uninstall.body.job.jobId);
+    expect(finished.status).toBe("failed");
+    expect(finished.phase).toBe("failed");
+    expect(finished.error).toContain("ModuleManager");
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(true);
+    expect(existsSync(join(ksp, "GameData", "DependentMod"))).toBe(true);
+  });
+
+  it("refuses an uninstall whose alsoRemove has a queued job", async () => {
+    const gate = deferred();
+    const { app } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
+    });
+    await installWithDependencies(app, "DependentMod");
+    const holder = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await vi.waitFor(async () => expect((await jobStatus(app, holder.body.job.jobId)).status).toBe("running"));
+    const reinstall = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect(reinstall.status).toBe(202);
+
+    const refused = await request(app)
+      .post("/api/v1/mods/DependentMod/uninstall")
+      .send({ alsoRemove: ["ModuleManager"] });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe("JOB_ALREADY_QUEUED");
+    expect(refused.body.message).toBe("Module Manager already has a queued or running job.");
+
+    gate.release();
+    expect((await waitForJob(app, holder.body.job.jobId)).status).toBe("succeeded");
+    expect((await waitForJob(app, reinstall.body.job.jobId)).status).toBe("succeeded");
+  });
+
+  it("lists, cancels and hides jobs", async () => {
+    const gate = deferred();
+    const { app, ksp } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
+    });
+    const running = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    const cancelled = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    const kept = await request(app).post("/api/v1/mods/AnotherMod/install").send({});
+    const ids = [running, cancelled, kept].map((response) => response.body.job.jobId as string);
+    await vi.waitFor(async () => expect((await jobStatus(app, ids[0]!)).status).toBe("running"));
+
+    const list = await request(app).get("/api/v1/jobs");
+    expect(list.status).toBe(200);
+    expect(list.body.jobs.map((job: { jobId: string; status: string }) => [job.jobId, job.status])).toEqual([
+      [ids[0], "running"],
+      [ids[1], "queued"],
+      [ids[2], "queued"],
+    ]);
+
+    const runningDelete = await request(app).delete(`/api/v1/jobs/${ids[0]}`);
+    expect(runningDelete.status).toBe(409);
+    expect(runningDelete.body.code).toBe("JOB_RUNNING");
+
+    expect((await request(app).delete(`/api/v1/jobs/${ids[1]}`)).status).toBe(204);
+    const afterCancel = await request(app).get("/api/v1/jobs");
+    expect(afterCancel.body.jobs.map((job: { jobId: string }) => job.jobId)).toEqual([ids[0], ids[2]]);
+    expect((await request(app).get(`/api/v1/jobs/${ids[1]}`)).status).toBe(404);
+
+    gate.release();
+    expect((await waitForJob(app, ids[0]!)).status).toBe("succeeded");
+    expect((await waitForJob(app, ids[2]!)).status).toBe("succeeded");
+    expect(existsSync(join(ksp, "GameData", "ModuleManager"))).toBe(false);
+
+    expect((await request(app).delete(`/api/v1/jobs/${ids[0]}`)).status).toBe(204);
+    const afterHide = await request(app).get("/api/v1/jobs");
+    expect(afterHide.body.jobs.map((job: { jobId: string }) => job.jobId)).toEqual([ids[2]]);
+
+    const unknown = await request(app).delete("/api/v1/jobs/does-not-exist");
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe("JOB_NOT_FOUND");
+  });
+
+  it("clears finished jobs and keeps the active ones", async () => {
+    const gate = deferred();
+    const { app } = await createInstallTestApp({
+      holdDownload: { url: "https://example.test/ExampleMod.zip", until: gate.until },
+    });
+    const done = await request(app).post("/api/v1/mods/ModuleManager/install").send({});
+    expect((await waitForJob(app, done.body.job.jobId)).status).toBe("succeeded");
+    const running = await request(app).post("/api/v1/mods/ExampleMod/install").send({});
+    await vi.waitFor(async () => expect((await jobStatus(app, running.body.job.jobId)).status).toBe("running"));
+    const queued = await request(app).post("/api/v1/mods/AnotherMod/install").send({});
+
+    expect((await request(app).post("/api/v1/jobs/clear-finished").send({})).status).toBe(204);
+    const list = await request(app).get("/api/v1/jobs");
+    expect(list.body.jobs.map((job: { jobId: string }) => job.jobId)).toEqual([
+      running.body.job.jobId,
+      queued.body.job.jobId,
+    ]);
+
+    gate.release();
     expect((await waitForJob(app, queued.body.job.jobId)).status).toBe("succeeded");
   });
 });

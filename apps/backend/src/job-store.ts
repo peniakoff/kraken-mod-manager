@@ -37,11 +37,6 @@ export class JobStore {
     return job;
   }
 
-  /** True while any job is queued or running. */
-  hasActiveJobs(): boolean {
-    return [...this.jobs.values()].some((job) => job.status === "queued" || job.status === "running");
-  }
-
   /** Visible jobs in creation order. */
   list(): JobResponse[] {
     return [...this.jobs.values()].filter((job) => !job.hidden).map((job) => this.toResponse(job));

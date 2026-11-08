@@ -31,10 +31,10 @@ import {
   type ModsResponse,
   type RegistryResponse,
   type UninstallPlanResponse,
-  type UninstallResponse,
+  type UninstallAcceptedResponse,
   type UpdatesResponse,
   uninstallPlanResponseSchema,
-  uninstallResponseSchema,
+  uninstallAcceptedResponseSchema,
   updatesResponseSchema,
 } from "@kraken/contracts";
 import { readonly, ref } from "vue";
@@ -212,8 +212,8 @@ export async function planUninstall(identifier: string): Promise<UninstallPlanRe
   });
 }
 
-export async function uninstallMod(identifier: string, alsoRemove: string[]): Promise<UninstallResponse> {
-  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/uninstall`, uninstallResponseSchema, {
+export async function uninstallMod(identifier: string, alsoRemove: string[]): Promise<UninstallAcceptedResponse> {
+  return request(`/api/v1/mods/${encodeURIComponent(identifier)}/uninstall`, uninstallAcceptedResponseSchema, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ alsoRemove }),

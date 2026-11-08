@@ -266,7 +266,19 @@ describe("App", () => {
           return json({ code: "UNINSTALL_PLAN_MISMATCH", message: "Another mod changed. Review the plan again." }, 409);
         }
         installed = [];
-        return json({ removed: ["DependentMod", "ModuleManager"] });
+        return json(
+          {
+            job: {
+              jobId: "job-uninstall",
+              kind: "uninstall",
+              identifier: "ModuleManager",
+              status: "queued",
+              phase: "queued",
+              alsoRemove: ["DependentMod"],
+            },
+          },
+          202,
+        );
       }
       if (url.startsWith("/api/v1/mods")) return json({ total: 0, mods: [] });
       throw new Error(`Unexpected fetch: ${url}`);

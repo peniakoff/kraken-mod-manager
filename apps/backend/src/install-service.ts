@@ -55,6 +55,7 @@ export class InstallServiceError extends Error {
       | "UNINSTALL_FAILED"
       | "JOB_NOT_FOUND"
       | "JOB_ALREADY_QUEUED"
+      | "JOB_RUNNING"
       | "NOT_MANAGED"
       | "PLAN_BLOCKED"
       | "PLAN_NOT_READY"
@@ -134,7 +135,7 @@ export class InstallService {
   ): Promise<JobResponse> {
     await this.registryService.ensureLoaded();
     const target = this.findModule(identifier, version);
-    this.assertNoActiveJob(target);
+    this.assertNoActiveJob([target.identifier]);
     // Resolve and pin the module list before accepting the job so the worker
     // installs exactly what was validated (no second inventory replan).
     // Picked optional mods and metapackages (which are nothing but their
@@ -144,7 +145,7 @@ export class InstallService {
 
     // Resolving awaits, so a concurrent request may have queued this mod meanwhile.
     // Check again with no await before the create so the two cannot interleave.
-    this.assertNoActiveJob(target);
+    this.assertNoActiveJob([target.identifier]);
     const job = this.jobStore.create("install", identifier, version === undefined ? {} : { version });
     // The user chose the target and each optional mod by name, so none of them
     // is offered for orphan cleanup later.
@@ -177,39 +178,100 @@ export class InstallService {
   }
 
   /**
-   * Recomputes the plan, checks the client's selection against it and
-   * removes the mods in dependency order. Returns the removed identifiers.
+   * Validates the selection against the current plan, then queues the removal.
+   * The queued run validates again because earlier jobs may change the plan.
    */
-  async uninstall(kspPath: string, identifier: string, alsoRemove: readonly string[]): Promise<string[]> {
-    try {
-      return await this.withManifestMutation(async () => {
-        const options = await this.uninstallOptions(kspPath, identifier);
-        const selection = validateUninstallSelection(planUninstall(options), alsoRemove, options);
-        if (!selection.ok) {
-          throw new InstallServiceError(selection.problems.join(" "), "UNINSTALL_PLAN_MISMATCH");
-        }
+  async startUninstall(kspPath: string, identifier: string, alsoRemove: readonly string[]): Promise<JobResponse> {
+    this.assertNoActiveJob([identifier, ...alsoRemove]);
+    await this.validateUninstall(kspPath, identifier, alsoRemove);
 
+    // Validation awaits, so a concurrent request may have queued the same mods meanwhile.
+    // Check again with no await before the create so the two cannot interleave.
+    this.assertNoActiveJob([identifier, ...alsoRemove]);
+    const job = this.jobStore.create("uninstall", identifier, { alsoRemove: [...alsoRemove] });
+    this.jobQueue.enqueue(job.jobId, () => this.runUninstall(job.jobId, kspPath, identifier, alsoRemove));
+    return this.jobStore.toResponse(job);
+  }
+
+  listJobs(): JobResponse[] {
+    return this.jobStore.list();
+  }
+
+  /** Cancels a queued job, hides a finished one, and refuses a running one. */
+  removeJob(jobId: string): void {
+    const job = this.jobStore.get(jobId);
+    if (job === undefined) {
+      throw new InstallServiceError("Unknown job.", "JOB_NOT_FOUND");
+    }
+    if (job.status === "succeeded" || job.status === "failed") {
+      this.jobStore.hide(jobId);
+      return;
+    }
+    // cancel() is false when the queue picked the job in the meantime.
+    if (job.status === "queued" && this.jobQueue.cancel(jobId)) {
+      this.jobStore.delete(jobId);
+      return;
+    }
+    throw new InstallServiceError("This job is running and cannot be removed.", "JOB_RUNNING");
+  }
+
+  clearFinishedJobs(): void {
+    this.jobStore.hideFinished();
+  }
+
+  private async validateUninstall(
+    kspPath: string,
+    identifier: string,
+    alsoRemove: readonly string[],
+  ): Promise<string[]> {
+    const options = await this.uninstallOptions(kspPath, identifier);
+    const selection = validateUninstallSelection(planUninstall(options), alsoRemove, options);
+    if (!selection.ok) {
+      throw new InstallServiceError(selection.problems.join(" "), "UNINSTALL_PLAN_MISMATCH");
+    }
+    return selection.removeOrder;
+  }
+
+  private async runUninstall(
+    jobId: string,
+    kspPath: string,
+    identifier: string,
+    alsoRemove: readonly string[],
+  ): Promise<void> {
+    this.jobStore.update(jobId, {
+      status: "running",
+      phase: "installing",
+      message: `Removing ${this.displayName(identifier)}.`,
+    });
+    try {
+      const removed = await this.withManifestMutation(async () => {
+        const removeOrder = await this.validateUninstall(kspPath, identifier, alsoRemove);
         const canonicalRoot = await this.fileSystem.realpath(kspPath);
         let manifest = await this.manifestStore.read();
-        for (const removedIdentifier of selection.removeOrder) {
+        for (const removedIdentifier of removeOrder) {
           manifest = await this.removeManagedMod(canonicalRoot, manifest, removedIdentifier);
         }
-        return selection.removeOrder;
+        return removeOrder;
       });
+      this.jobStore.update(jobId, { status: "succeeded", phase: "done", removed });
     } catch (error: unknown) {
-      if (error instanceof InstallServiceError) {
-        throw error;
-      }
-      throw new InstallServiceError(
-        error instanceof Error ? error.message : "Uninstall failed.",
-        "UNINSTALL_FAILED",
-      );
+      const message = error instanceof Error ? error.message : "Uninstall failed.";
+      this.jobStore.update(jobId, { status: "failed", phase: "failed", error: message, message });
     }
   }
 
-  private assertNoActiveJob(target: CkanModule): void {
-    if (this.jobStore.activeIdentifiers().has(moduleIdentifierKey(target.identifier))) {
-      throw new InstallServiceError(`${target.name} already has a queued or running job.`, "JOB_ALREADY_QUEUED");
+  private displayName(identifier: string): string {
+    return this.registryService.findModule(identifier)?.name ?? identifier;
+  }
+
+  private assertNoActiveJob(identifiers: readonly string[]): void {
+    const active = this.jobStore.activeIdentifiers();
+    const busy = identifiers.find((identifier) => active.has(moduleIdentifierKey(identifier)));
+    if (busy !== undefined) {
+      throw new InstallServiceError(
+        `${this.displayName(busy)} already has a queued or running job.`,
+        "JOB_ALREADY_QUEUED",
+      );
     }
   }
 
