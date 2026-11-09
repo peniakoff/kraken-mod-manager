@@ -15,8 +15,8 @@ dependencies, and install or uninstall with a local-first workflow.
 
 ## Prerequisites
 
-- Node.js 24.18.0 or newer (`.nvmrc` pins the development version)
-- Corepack-enabled pnpm 11.13.1 or newer
+- Node.js 24 or newer (`.nvmrc` pins the development version, currently 24.22.2)
+- Corepack-enabled pnpm; the exact version is pinned in `packageManager` (currently 11.28.9) and installed by Corepack
 
 ## Development
 
