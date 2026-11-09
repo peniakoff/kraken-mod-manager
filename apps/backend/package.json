@@ -18,7 +18,7 @@
     "@kraken/contracts": "workspace:*",
     "@kraken/core": "workspace:*",
     "express": "^5.3.0",
-    "express-rate-limit": "8.7.2",
+    "express-rate-limit": "8.7.3",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
